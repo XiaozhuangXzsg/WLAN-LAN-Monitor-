@@ -1,0 +1,12 @@
+D:\Codex\Monitor\bin\Release\net8.0-windows\NetworkMonitor.exe
+D:\Codex\Monitor\bin\Release\net8.0-windows\NetworkMonitor.deps.json
+D:\Codex\Monitor\bin\Release\net8.0-windows\NetworkMonitor.runtimeconfig.json
+D:\Codex\Monitor\bin\Release\net8.0-windows\NetworkMonitor.dll
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.GeneratedMSBuildEditorConfig.editorconfig
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.AssemblyInfoInputs.cache
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.AssemblyInfo.cs
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.csproj.CoreCompileInputs.cache
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.dll
+D:\Codex\Monitor\obj\Release\net8.0-windows\refint\NetworkMonitor.dll
+D:\Codex\Monitor\obj\Release\net8.0-windows\NetworkMonitor.genruntimeconfig.cache
+D:\Codex\Monitor\obj\Release\net8.0-windows\ref\NetworkMonitor.dll

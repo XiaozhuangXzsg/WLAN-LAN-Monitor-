@@ -1,0 +1,4 @@
+D:\Codex\Monitor\artifacts\app\NetworkMonitor.exe
+D:\Codex\Monitor\artifacts\app\NetworkMonitor.dll
+D:\Codex\Monitor\artifacts\app\NetworkMonitor.deps.json
+D:\Codex\Monitor\artifacts\app\NetworkMonitor.runtimeconfig.json
