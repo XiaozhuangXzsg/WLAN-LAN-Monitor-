@@ -14,11 +14,11 @@ dotnet run --project NetworkMonitor.csproj
 
 ## 安装包
 
-[下载 1.4.8 安装包](https://github.com/XiaozhuangXzsg/WLAN-LAN-Monitor-/releases/download/v1.4.8/NetworkMonitor-Setup-1.4.8.exe) · [GitHub Releases](https://github.com/XiaozhuangXzsg/WLAN-LAN-Monitor-/releases) · [更新记录](CHANGELOG.md)
+[下载 1.4.9 安装包](https://github.com/XiaozhuangXzsg/WLAN-LAN-Monitor-/releases/download/v1.4.9/NetworkMonitor-Setup-1.4.9.exe) · [GitHub Releases](https://github.com/XiaozhuangXzsg/WLAN-LAN-Monitor-/releases) · [更新记录](CHANGELOG.md)
 
 每次更新安装包都会发布到对应版本的 GitHub Release，并附上安装包和更新说明。开发者完成构建、验证并同步源码与安装包后，运行 `installer\Publish-GitHubRelease.ps1`；脚本从项目读取版本号，通过现有 Git 登录凭据或 `GH_TOKEN`/`GITHUB_TOKEN` 发布，检查提交中的安装包与本地文件一致，再上传、核对 SHA-256 并公开 Release。可使用 `-VerifyOnly` 仅检查而不发布。历史版本保留，不覆盖内容不同的已发布附件。
 
-运行 `artifacts\NetworkMonitor-Setup-1.4.8.exe`，可通过“浏览”选择安装文件夹，并选择是否创建桌面快捷方式。若选择盘符根目录（例如 `D:\`），安装路径会自动变为 `D:\Internet Monitor` 并创建该文件夹；选择其他目录时保留所选路径。安装界面显示预计安装大小（按包内文件解压后的实际字节数计算）和安装包大小；预计大小不含 .NET 运行时、后续用量日志和快捷方式。程序会创建开始菜单快捷方式，安装到所选目录，Windows“已安装的应用”中也会记录预计大小。程序和快捷方式使用透明背景的网络图表图标。安装完成后会询问是否开启开机自启：选择“是”时通过 Windows 权限提示为当前用户配置登录计划任务，选择“否”跳过启用并保留已有自启设置；配置失败不影响安装，可在软件中重试。此配置使用安装包内的独立助手，不依赖软件的 .NET 8 运行时。升级前请从托盘菜单退出旧版。可在 Windows“已安装的应用”中卸载；支持默认、根目录下自动生成的文件夹及其他自选安装路径，仅删除程序文件，保留目录中其他文件与独立用量日志。安装包不含 .NET 运行时，运行软件仍需 .NET 8 Windows Desktop Runtime。开发者可运行 `installer\Build-Installer.ps1` 重新生成安装包。
+运行 `artifacts\NetworkMonitor-Setup-1.4.9.exe`，可通过“浏览”选择安装文件夹，并选择是否创建桌面快捷方式。若选择盘符根目录（例如 `D:\`），安装路径会自动变为 `D:\Internet Monitor` 并创建该文件夹；选择其他目录时保留所选路径。安装界面显示预计安装大小（按包内文件解压后的实际字节数计算）和安装包大小；预计大小不含 .NET 运行时、后续用量日志和快捷方式。程序会创建开始菜单快捷方式，安装到所选目录，Windows“已安装的应用”中也会记录预计大小。程序和快捷方式使用透明背景的网络图表图标。安装完成后会询问是否开启开机自启：选择“是”时通过 Windows 权限提示为当前用户配置登录计划任务，选择“否”跳过启用并保留已有自启设置；配置失败不影响安装，可在软件中重试。此配置使用安装包内的独立助手，不依赖软件的 .NET 8 运行时。升级前请从托盘菜单退出旧版。可在 Windows“已安装的应用”中卸载；支持默认、根目录下自动生成的文件夹及其他自选安装路径，仅删除程序文件，保留目录中其他文件与独立用量日志。安装包不含 .NET 运行时，运行软件仍需 .NET 8 Windows Desktop Runtime。开发者可运行 `installer\Build-Installer.ps1` 重新生成安装包。
 
 ## 项目与作者
 
@@ -37,8 +37,8 @@ dotnet run --project NetworkMonitor.csproj
 - 每种网卡各显示软件和远端 IP 流量前三名；软件榜会提取对应可执行文件图标。排行统计仅保留本次运行的数据。
 - 网卡卡片中的按钮可启用或禁用对应以太网/WLAN 适配器。禁用会立即中断该网卡的网络连接。
 - “一键优化网络”会清除 Windows DNS 缓存，并把 TCP 自动调节恢复为 Windows 默认 Normal；不会替换校园网 DNS 或断开网卡。
-- 界面采用原神幻想风格的暖白、深蓝和金色配色，卡片、切换按钮、网卡选择器和浮窗均使用圆角。字体优先选择设备已安装的原神 UI 字体；没有时使用系统黑体作为回退，不会安装或捆绑专有字体。
-- “主题 ▾”菜单新增“WinUI 3 半透明”，采用浅灰白背景、蓝色强调色和 Segoe UI 字体。主窗口与浮窗同步切换，主题选择会保存并在下次启动时恢复。主窗口不透明度为 92%，浮窗为 90%；切回原有主题恢复完全不透明。该主题基于现有 WinForms 实现 WinUI 3 风格，使用 Windows [窗口不透明度](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.form.opacity)合成实际半透明效果，文字与控件也参与透明混合；不包含原生 WinUI 3 Acrylic/Mica 背景模糊。在 Windows 11 上同时更新系统标题栏颜色和圆角偏好。
+- 界面采用原神幻想风格的暖白、深蓝和金色配色，卡片、切换按钮、网卡选择器和浮窗均使用圆角。主窗口字体优先选择设备已安装的原神 UI 字体；没有时使用系统黑体作为回退，不会安装或捆绑专有字体。
+- “主题 ▾”菜单新增“WinUI 3 半透明”，采用浅灰白背景、蓝色强调色和 Segoe UI 字体。主窗口与浮窗同步切换，主题选择会保存并在下次启动时恢复。主窗口不透明度为 92%，浮窗为 96%；切回原有主题恢复完全不透明。该主题基于现有 WinForms 实现 WinUI 3 风格，使用 Windows [窗口不透明度](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.form.opacity)合成实际半透明效果，文字与控件也参与透明混合；不包含原生 WinUI 3 Acrylic/Mica 背景模糊。在 Windows 11 上同时更新系统标题栏颜色和圆角偏好。浮窗文字优先使用 Microsoft YaHei UI，不随装饰字体切换；标题采用 15 像素加粗，说明为 13–14 像素，上传和下载速度均采用 15–22 像素加粗（以 100% 缩放为基准）。文字按显示器 DPI 直接绘制到整数像素位置，支持每显示器 DPI 感知，缩小窗口时优先缩紧间距以保留速度单位。
 - 顶部标题区与工具栏使用窗口背景色，按钮自身按圆角裁剪，四种主题下切换、悬停和禁用时不会在圆角外出现白色矩形底板。
 - 开机启动默认关闭。安装完成时可以选择开启，也可以在软件中勾选“跟随系统启动”：为当前用户创建登录后约 5 秒运行的计划任务，使用最高可用权限，后台进入托盘，并按之前设置显示浮窗；自启时不会弹出首次使用欢迎窗口。取消勾选会删除任务。不存储用户密码。开启前建议先安装到正式位置。卸载时也会移除该任务，累计记录保留。
 - 自动启动使用 Windows [登录触发器](https://learn.microsoft.com/en-us/windows/win32/taskschd/starting-an-executable-when-a-user-logs-on)和[任务权限设置](https://learn.microsoft.com/en-us/windows/win32/taskschd/principal-runlevel)。

@@ -1,8 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $artifactRoot = Join-Path $projectRoot 'artifacts'
-$appRoot = Join-Path $artifactRoot 'app-1.4.8'
-$buildRoot = Join-Path $artifactRoot 'build-1.4.8'
+[xml]$project = Get-Content -LiteralPath (Join-Path $projectRoot 'NetworkMonitor.csproj') -Raw
+$version = [string]$project.Project.PropertyGroup.Version
+$appRoot = Join-Path $artifactRoot ('app-' + $version)
+$buildRoot = Join-Path $artifactRoot ('build-' + $version)
 $packageRoot = Join-Path $artifactRoot 'package'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 
@@ -29,7 +31,7 @@ if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload -Force 
 $inputs = @($payloadFiles | ForEach-Object { Join-Path $packageRoot $_ }) + $uninstallerPath + (Join-Path $packageRoot 'network-monitor.png')
 Compress-Archive -LiteralPath $inputs -DestinationPath $payload -CompressionLevel Optimal
 
-$setupPath = Join-Path $artifactRoot 'NetworkMonitor-Setup-1.4.8.exe'
+$setupPath = Join-Path $artifactRoot ('NetworkMonitor-Setup-' + $version + '.exe')
 & $compiler /nologo /target:winexe "/out:$setupPath" "/win32icon:$iconIco" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.IO.Compression.dll /reference:Microsoft.CSharp.dll "/resource:$payload,payload.zip" (Join-Path $PSScriptRoot 'Setup.cs') (Join-Path $projectRoot 'StartupTasks.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 Get-Item -LiteralPath $setupPath | Select-Object FullName,Length

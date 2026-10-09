@@ -15,6 +15,7 @@ internal static class Verification
         var results = VerifyUsage(directory);
         results.AddRange(VerifyStartup(directory));
         void Check(bool value, string name) { if (!value) throw new Exception(name); results.Add("PASS " + name); }
+        Check(Application.HighDpiMode == HighDpiMode.PerMonitorV2, "application renders natively for each monitor's DPI");
         using (var welcome = new WelcomeForm())
         {
             welcome.Show(); Application.DoEvents();
@@ -44,7 +45,7 @@ internal static class Verification
         }
         var originalTheme = Theme.Current;
         form.SetTheme(Theme.WinUITheme); Application.DoEvents();
-        Check(form.Opacity < 1 && form.Opacity > 0.85 && form.Floating.Opacity < form.Opacity, "WinUI theme makes both windows translucent");
+        Check(form.Opacity < 1 && form.Opacity > 0.85 && form.Floating.Opacity < 1 && form.Floating.Opacity >= 0.96, "WinUI keeps both windows translucent with a more opaque floating window for legibility");
         Check(form.BackColor == Theme.Background && form.Floating.BackColor == Theme.Background && form.Floating.Controls[0].BackColor == Theme.Background, "live theme switch updates both windows and floating background");
         IEnumerable<Control> Descendants(Control root) => root.Controls.Cast<Control>().SelectMany(x => new[] { x }.Concat(Descendants(x)));
         Check(Descendants(form).OfType<Label>().Where(x => x.Text == "↓ 下载速率").All(x => x.ForeColor == Theme.Muted), "live switch updates label color roles");
@@ -141,6 +142,19 @@ internal static class Verification
             using var bitmap = new Bitmap(floating.Width, floating.Height);
             floating.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
             bitmap.Save(Path.Combine(directory, "floating-" + item.name + ".png"));
+        }
+        // Render at real device pixel dimensions without changing the user's display settings.
+        foreach (int dpi in new[] { 96, 120, 144, 192 })
+        foreach (var logical in new[] { new Size(430, 338), new Size(320, 230), new Size(240, 144) })
+        {
+            var pixels = new Size(logical.Width * dpi / 96, logical.Height * dpi / 96);
+            using var bitmap = new Bitmap(pixels.Width, pixels.Height);
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.Clear(Theme.Background);
+                comparison.Render(graphics, pixels, dpi);
+            }
+            bitmap.Save(Path.Combine(directory, $"floating-dpi-{dpi}-{logical.Width}.png"));
         }
         var rememberedSize = floating.LogicalSize;
         Mouse("OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, 50, 50, 0));

@@ -20,6 +20,7 @@ internal static class Theme
     public static Color Blue { get; private set; }
     public static Color Teal { get; private set; }
     public static Color Gold { get; private set; }
+    public static Color FloatingSecondaryText => Color.FromArgb((Text.R + Muted.R) / 2, (Text.G + Muted.G) / 2, (Text.B + Muted.B) / 2);
     public static string Current { get; private set; } = "原神暖白";
     public static event Action? Changed;
     static Theme() => Set("原神暖白", false);
@@ -103,7 +104,7 @@ internal static class Theme
     public static void ApplyWindow(Form form, bool floating = false)
     {
         // Layered-window alpha works with the existing WinForms controls on Windows 10 and 11.
-        double opacity = IsTranslucent ? floating ? 0.90 : 0.92 : 1;
+        double opacity = IsTranslucent ? floating ? 0.96 : 0.92 : 1;
         if (Math.Abs(form.Opacity - opacity) > 0.005) form.Opacity = opacity;
         if (!form.IsHandleCreated) return;
         SetWindowAttribute(form.Handle, 20, Current == "夜色深蓝" ? 1 : 0);
@@ -116,7 +117,16 @@ internal static class Theme
     }
     private static void SetWindowAttribute(IntPtr window, int attribute, int value) => DwmSetWindowAttribute(window, attribute, ref value, sizeof(int));
     private static readonly string ClassicFontFamily = GetFontFamily();
+    public static string FloatingFontFamily { get; } = GetFloatingFontFamily();
     public static string FontFamily => IsTranslucent ? "Segoe UI" : ClassicFontFamily;
+    private static string GetFloatingFontFamily()
+    {
+        using var fonts = new System.Drawing.Text.InstalledFontCollection();
+        var installed = fonts.Families.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var family in new[] { "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI" })
+            if (installed.Contains(family)) return family;
+        return SystemFonts.MessageBoxFont!.FontFamily.Name;
+    }
     private static string GetFontFamily()
     {
         var installed = new System.Drawing.Text.InstalledFontCollection().Families.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);

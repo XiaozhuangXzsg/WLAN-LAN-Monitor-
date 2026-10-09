@@ -14,6 +14,8 @@ internal sealed class FloatingForm : Form
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     public FloatingForm()
     {
+        AutoScaleDimensions = new SizeF(96, 96);
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "实时流量 · 始终置顶";
         FormBorderStyle = FormBorderStyle.None;
         ClientSize = new Size(430, 338);
@@ -24,6 +26,7 @@ internal sealed class FloatingForm : Form
         Location = new Point(area.Right - Width - 20, area.Top + 60);
         TopMost = true; ShowInTaskbar = false; BackColor = Theme.Background;
         SizeChanged += (_, _) => { ApplyRoundedShape(); display.Invalidate(); };
+        DpiChanged += (_, _) => { ApplyRoundedShape(); display.Invalidate(); };
         Controls.Add(display);
         ApplyRoundedShape();
         AttachGestures(this);
@@ -115,8 +118,9 @@ internal sealed class FloatingForm : Form
 internal sealed class RateComparison : Control
 {
     internal enum LayoutDensity { Full, Compact, Minimal }
-    internal LayoutDensity Density => Width * 96d / DeviceDpi >= 360 && Height * 96d / DeviceDpi >= 300 ? LayoutDensity.Full
-        : Width * 96d / DeviceDpi >= 300 && Height * 96d / DeviceDpi >= 210 ? LayoutDensity.Compact : LayoutDensity.Minimal;
+    internal LayoutDensity Density => GetDensity(ClientSize, DeviceDpi);
+    private static LayoutDensity GetDensity(Size pixels, int dpi) => pixels.Width * 96d / dpi >= 360 && pixels.Height * 96d / dpi >= 300 ? LayoutDensity.Full
+        : pixels.Width * 96d / dpi >= 300 && pixels.Height * 96d / dpi >= 210 ? LayoutDensity.Compact : LayoutDensity.Minimal;
     private long ethernetUp, ethernetDown, wlanUp, wlanDown, ethernetTotal, wlanTotal, ethernetLimit, ethernetMonth;
     public RateComparison()
     {
@@ -131,20 +135,24 @@ internal sealed class RateComparison : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        var g = e.Graphics;
+        Render(e.Graphics, ClientSize, DeviceDpi);
+    }
+    internal void Render(Graphics g, Size pixels, int dpi)
+    {
         var saved = g.Save();
-        float scale = DeviceDpi / 96f;
+        float scale = dpi / 96f;
         g.ScaleTransform(scale, scale);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-        int width = (int)(Width / scale), height = (int)(Height / scale);
-        var density = Density;
-        using var heading = new Font(Theme.FontFamily, 13, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var normal = new Font(Theme.FontFamily, 12, FontStyle.Regular, GraphicsUnit.Pixel);
-        using var large = new Font(Theme.FontFamily, density == LayoutDensity.Full ? 22 : density == LayoutDensity.Compact ? 17 : 14, FontStyle.Bold, GraphicsUnit.Pixel);
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        int width = (int)(pixels.Width / scale), height = (int)(pixels.Height / scale);
+        var density = GetDensity(pixels, dpi);
+        // Rasterize at the monitor's actual pixel size instead of scaling small glyphs.
+        Font MakeFont(int size, FontStyle style) => new(Theme.FloatingFontFamily, (int)Math.Round(size * scale), style, GraphicsUnit.Pixel);
+        using var heading = MakeFont(15, FontStyle.Bold);
+        using var normal = MakeFont(density == LayoutDensity.Compact ? 13 : 14, FontStyle.Regular);
+        using var large = MakeFont(density == LayoutDensity.Full ? 22 : density == LayoutDensity.Compact ? 18 : 15, FontStyle.Bold);
         using var track = new SolidBrush(Theme.Border);
         using var surface = new SolidBrush(Theme.Surface);
-        using var textFormat = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
         var maximum = Math.Max(1024, Math.Max(ethernetUp + ethernetDown, wlanUp + wlanDown));
         int quotaHeight = density == LayoutDensity.Full ? 80 : density == LayoutDensity.Compact ? 34 : 0;
         int rowHeight = (height - 40 - (quotaHeight > 0 ? 20 + quotaHeight : 10)) / 2;
@@ -158,20 +166,39 @@ internal sealed class RateComparison : Control
         g.Restore(saved);
         void DrawText(string text, Font font, Color color, Rectangle rect, bool right = false)
         {
-            using var brush = new SolidBrush(color);
-            textFormat.Alignment = right ? StringAlignment.Far : StringAlignment.Near;
-            g.DrawString(text, font, brush, rect, textFormat);
+            var textState = g.Save();
+            g.ScaleTransform(1 / scale, 1 / scale);
+            var bounds = Rectangle.FromLTRB((int)Math.Round(rect.Left * scale), (int)Math.Round(rect.Top * scale),
+                (int)Math.Round(rect.Right * scale), (int)Math.Round(rect.Bottom * scale));
+            var flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping
+                | TextFormatFlags.PreserveGraphicsTranslateTransform | (right ? TextFormatFlags.Right : TextFormatFlags.Left);
+            TextRenderer.DrawText(g, text, font, bounds, color, Theme.Surface, flags);
+            g.Restore(textState);
+        }
+        void DrawRate(string direction, long bytes, Rectangle rect)
+        {
+            string text = direction + " " + Fmt.Rate(bytes);
+            int available = (int)Math.Round(rect.Width * scale);
+            int Measure(string value, Font font) => TextRenderer.MeasureText(g, value, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+            if (Measure(text, large) <= available) { DrawText(text, large, Theme.Text, rect); return; }
+            // Keep the unit visible in narrow windows; remove spacing before reducing type.
+            text = direction + Fmt.Rate(bytes).Replace(" ", "");
+            if (Measure(text, large) <= available) { DrawText(text, large, Theme.Text, rect); return; }
+            using var fitted = MakeFont(14, FontStyle.Bold);
+            DrawText(text, fitted, Theme.Text, rect);
         }
         void DrawRow(string name, long up, long down, long total, Color accent, int y)
         {
             using var path = Theme.RoundedPath(new Rectangle(10, y, width - 20, rowHeight), 12);
             g.FillPath(surface, path);
-            DrawText(name, heading, accent, new Rectangle(22, y + 5, 72, 20));
-            if (density != LayoutDensity.Minimal) DrawText("本月累计 " + Fmt.Bytes(total), normal, Theme.Muted, new Rectangle(102, y + 5, width - 124, 20), right: true);
+            DrawText(name, heading, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Minimal ? 1 : 4), 72, density == LayoutDensity.Minimal ? 22 : 24));
+            if (density != LayoutDensity.Minimal) DrawText("本月累计 " + Fmt.Bytes(total), normal, Theme.FloatingSecondaryText, new Rectangle(102, y + 4, width - 124, 24), right: true);
             int column = (width - 44) / 2;
-            int speedY = y + (density == LayoutDensity.Full ? Math.Max(30, rowHeight / 2 - 10) : 24);
-            DrawText("↓ " + Fmt.Rate(down), large, Theme.Text, new Rectangle(22, speedY, column - 4, density == LayoutDensity.Full ? 30 : 22));
-            DrawText("↑ " + Fmt.Rate(up), density == LayoutDensity.Full ? normal : large, Theme.Muted, new Rectangle(22 + column, speedY, column, density == LayoutDensity.Full ? 30 : 22));
+            int speedY = y + (density == LayoutDensity.Full ? Math.Max(30, rowHeight / 2 - 10) : density == LayoutDensity.Compact ? 30 : 25);
+            int speedHeight = density == LayoutDensity.Full ? 30 : density == LayoutDensity.Compact ? 26 : 22;
+            DrawRate("↓", down, new Rectangle(22, speedY, column - 4, speedHeight));
+            DrawRate("↑", up, new Rectangle(22 + column, speedY, column, speedHeight));
             if (density != LayoutDensity.Full) return;
             using var barPath = Theme.RoundedPath(new Rectangle(24, y + rowHeight - 18, width - 48, 5), 2);
             g.FillPath(track, barPath);
@@ -184,7 +211,7 @@ internal sealed class RateComparison : Control
             using var path = Theme.RoundedPath(new Rectangle(10, y, width - 20, quotaHeight), 12);
             g.FillPath(surface, path);
             string text = ethernetLimit <= 0 ? $"以太网月额度未设置 · 已用 {Fmt.Bytes(ethernetMonth)}" : $"以太网剩余 {Fmt.Bytes(Math.Max(0, ethernetLimit - ethernetMonth))} / {Fmt.Bytes(ethernetLimit)}";
-            DrawText(text, normal, Theme.Gold, new Rectangle(22, y + (density == LayoutDensity.Full ? 10 : 5), width - 44, 24));
+            DrawText(text, normal, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Full ? 10 : 5), width - 44, 24));
             if (density != LayoutDensity.Full) return;
             int barWidth = width - 44;
             using var trackPath = Theme.RoundedPath(new Rectangle(22, y + 47, barWidth, 10), 5);
