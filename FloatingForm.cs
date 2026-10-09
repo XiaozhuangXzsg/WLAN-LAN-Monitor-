@@ -141,13 +141,15 @@ internal sealed class RateComparison : Control
     {
         var saved = g.Save();
         float scale = dpi / 96f;
-        g.ScaleTransform(scale, scale);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         int width = (int)(pixels.Width / scale), height = (int)(pixels.Height / scale);
         var density = GetDensity(pixels, dpi);
         // Rasterize at the monitor's actual pixel size instead of scaling small glyphs.
         Font MakeFont(int size, FontStyle style) => new(Theme.FloatingFontFamily, (int)Math.Round(size * scale), style, GraphicsUnit.Pixel);
+        int Pixel(int logical) => (int)Math.Round(logical * scale);
+        Rectangle PixelRect(Rectangle rect) => Rectangle.FromLTRB(Pixel(rect.Left), Pixel(rect.Top), Pixel(rect.Right), Pixel(rect.Bottom));
+        GraphicsPath PixelPath(Rectangle rect, int radius) => Theme.RoundedPath(PixelRect(rect), Math.Max(1, Pixel(radius)));
         using var heading = MakeFont(15, FontStyle.Bold);
         using var normal = MakeFont(density == LayoutDensity.Compact ? 13 : 14, FontStyle.Regular);
         using var large = MakeFont(density == LayoutDensity.Full ? 22 : density == LayoutDensity.Compact ? 18 : 15, FontStyle.Bold);
@@ -159,22 +161,21 @@ internal sealed class RateComparison : Control
         DrawRow("以太网", ethernetUp, ethernetDown, ethernetTotal, Theme.Blue, 10);
         DrawRow("WLAN", wlanUp, wlanDown, wlanTotal, Theme.Teal, 20 + rowHeight);
         if (quotaHeight > 0) DrawEthernetQuota(30 + rowHeight * 2);
-        using (var grip = new Pen(Theme.Muted, 1.4f))
+        using (var grip = new Pen(Theme.Muted, 1.4f * scale))
         {
-            for (int i = 0; i < 3; i++) g.DrawLine(grip, width - 20 + i * 4, height - 8, width - 8, height - 20 + i * 4);
+            for (int i = 0; i < 3; i++) g.DrawLine(grip, Pixel(width - 20 + i * 4), Pixel(height - 8), Pixel(width - 8), Pixel(height - 20 + i * 4));
         }
         g.Restore(saved);
         void DrawText(string text, Font font, Color color, Rectangle rect, bool right = false)
         {
-            var textState = g.Save();
-            g.ScaleTransform(1 / scale, 1 / scale);
-            var bounds = Rectangle.FromLTRB((int)Math.Round(rect.Left * scale), (int)Math.Round(rect.Top * scale),
-                (int)Math.Round(rect.Right * scale), (int)Math.Round(rect.Bottom * scale));
+            // GDI text and GDI+ shapes share device pixels and the native paint clip.
+            // Scaling Graphics would convert a finite clip to logical coordinates,
+            // which TextRenderer then applies as pixels and truncates the window.
+            var bounds = PixelRect(rect);
             var flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.PreserveGraphicsClipping
                 | TextFormatFlags.PreserveGraphicsTranslateTransform | (right ? TextFormatFlags.Right : TextFormatFlags.Left);
             TextRenderer.DrawText(g, text, font, bounds, color, Theme.Surface, flags);
-            g.Restore(textState);
         }
         void DrawRate(string direction, long bytes, Rectangle rect)
         {
@@ -190,7 +191,7 @@ internal sealed class RateComparison : Control
         }
         void DrawRow(string name, long up, long down, long total, Color accent, int y)
         {
-            using var path = Theme.RoundedPath(new Rectangle(10, y, width - 20, rowHeight), 12);
+            using var path = PixelPath(new Rectangle(10, y, width - 20, rowHeight), 12);
             g.FillPath(surface, path);
             DrawText(name, heading, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Minimal ? 1 : 4), 72, density == LayoutDensity.Minimal ? 22 : 24));
             if (density != LayoutDensity.Minimal) DrawText("本月累计 " + Fmt.Bytes(total), normal, Theme.FloatingSecondaryText, new Rectangle(102, y + 4, width - 124, 24), right: true);
@@ -200,21 +201,21 @@ internal sealed class RateComparison : Control
             DrawRate("↓", down, new Rectangle(22, speedY, column - 4, speedHeight));
             DrawRate("↑", up, new Rectangle(22 + column, speedY, column, speedHeight));
             if (density != LayoutDensity.Full) return;
-            using var barPath = Theme.RoundedPath(new Rectangle(24, y + rowHeight - 18, width - 48, 5), 2);
+            using var barPath = PixelPath(new Rectangle(24, y + rowHeight - 18, width - 48, 5), 2);
             g.FillPath(track, barPath);
             using var fill = new SolidBrush(accent);
-            using var fillPath = Theme.RoundedPath(new Rectangle(24, y + rowHeight - 18, Math.Max(4, (int)((width - 48) * ((up + down) / (double)maximum))), 5), 2);
+            using var fillPath = PixelPath(new Rectangle(24, y + rowHeight - 18, Math.Max(4, (int)((width - 48) * ((up + down) / (double)maximum))), 5), 2);
             g.FillPath(fill, fillPath);
         }
         void DrawEthernetQuota(int y)
         {
-            using var path = Theme.RoundedPath(new Rectangle(10, y, width - 20, quotaHeight), 12);
+            using var path = PixelPath(new Rectangle(10, y, width - 20, quotaHeight), 12);
             g.FillPath(surface, path);
             string text = ethernetLimit <= 0 ? $"以太网月额度未设置 · 已用 {Fmt.Bytes(ethernetMonth)}" : $"以太网剩余 {Fmt.Bytes(Math.Max(0, ethernetLimit - ethernetMonth))} / {Fmt.Bytes(ethernetLimit)}";
             DrawText(text, normal, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Full ? 10 : 5), width - 44, 24));
             if (density != LayoutDensity.Full) return;
             int barWidth = width - 44;
-            using var trackPath = Theme.RoundedPath(new Rectangle(22, y + 47, barWidth, 10), 5);
+            using var trackPath = PixelPath(new Rectangle(22, y + 47, barWidth, 10), 5);
             g.FillPath(track, trackPath);
             if (ethernetLimit > 0)
             {
@@ -222,8 +223,8 @@ internal sealed class RateComparison : Control
                 int remainingWidth = (int)(barWidth * Math.Min(1, remaining / (double)ethernetLimit));
                 if (remainingWidth > 0)
                 {
-                    using var remainingPath = Theme.RoundedPath(new Rectangle(22, y + 47, Math.Max(10, remainingWidth), 10), 5);
-                    using var gradient = new LinearGradientBrush(new Rectangle(22, y + 47, barWidth, 10), Theme.Teal, Theme.Gold, 0f);
+                    using var remainingPath = PixelPath(new Rectangle(22, y + 47, Math.Max(10, remainingWidth), 10), 5);
+                    using var gradient = new LinearGradientBrush(PixelRect(new Rectangle(22, y + 47, barWidth, 10)), Theme.Teal, Theme.Gold, 0f);
                     g.FillPath(gradient, remainingPath);
                 }
             }

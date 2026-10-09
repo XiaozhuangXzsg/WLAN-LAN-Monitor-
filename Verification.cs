@@ -156,6 +156,50 @@ internal static class Verification
             }
             bitmap.Save(Path.Combine(directory, $"floating-dpi-{dpi}-{logical.Width}.png"));
         }
+        // A real WinForms paint has a finite update region. Plain bitmap rendering
+        // alone does not exercise the GDI clip used by TextRenderer.
+        var clipTheme = Theme.Current;
+        foreach (var (name, index) in Theme.Names.Select((name, index) => (name, index)))
+        foreach (int dpi in new[] { 96, 120, 144, 168, 192 })
+        {
+            Theme.Set(name, false);
+            var pixels = new Size(400 * dpi / 96, 305 * dpi / 96);
+            using var baseline = new Bitmap(pixels.Width, pixels.Height);
+            using var clipped = new Bitmap(pixels.Width, pixels.Height);
+            using (var graphics = Graphics.FromImage(baseline))
+            { graphics.Clear(Theme.Background); comparison.Render(graphics, pixels, dpi); }
+            using (var graphics = Graphics.FromImage(clipped))
+            {
+                graphics.Clear(Theme.Background);
+                graphics.SetClip(new Rectangle(Point.Empty, pixels));
+                comparison.Render(graphics, pixels, dpi);
+            }
+            clipped.Save(Path.Combine(directory, $"floating-paint-clip-{index}-{dpi}.png"));
+            Check(BitmapBytes(baseline).SequenceEqual(BitmapBytes(clipped)), $"finite paint clip preserves all floating text in {name} at {dpi} DPI");
+            foreach (var (part, repaintArea) in new[]
+            {
+                ("right", new Rectangle(pixels.Width / 2, 0, pixels.Width - pixels.Width / 2, pixels.Height)),
+                ("bottom", new Rectangle(0, pixels.Height * 2 / 3, pixels.Width, pixels.Height - pixels.Height * 2 / 3))
+            })
+            {
+                using var expected = (Bitmap)baseline.Clone();
+                using (var graphics = Graphics.FromImage(expected))
+                {
+                    graphics.SetClip(repaintArea, System.Drawing.Drawing2D.CombineMode.Exclude);
+                    using var background = new SolidBrush(Theme.Background);
+                    graphics.FillRectangle(background, new Rectangle(Point.Empty, pixels));
+                }
+                using var repaint = new Bitmap(pixels.Width, pixels.Height);
+                using (var graphics = Graphics.FromImage(repaint))
+                {
+                    graphics.Clear(Theme.Background); graphics.SetClip(repaintArea);
+                    comparison.Render(graphics, pixels, dpi);
+                }
+                repaint.Save(Path.Combine(directory, $"floating-paint-{part}-{index}-{dpi}.png"));
+                Check(BitmapBytes(expected).SequenceEqual(BitmapBytes(repaint)), $"{part} partial repaint preserves floating text and respects the clip in {name} at {dpi} DPI");
+            }
+        }
+        Theme.Set(clipTheme, false);
         var rememberedSize = floating.LogicalSize;
         Mouse("OnMouseDoubleClick", new MouseEventArgs(MouseButtons.Left, 2, 50, 50, 0));
         Check(form.Floating == null, "double click closes floating and synchronizes toggle");
@@ -185,6 +229,18 @@ internal static class Verification
         }
         Theme.Set(originalTheme, false);
         File.WriteAllLines(Path.Combine(directory, "verification.txt"), results);
+    }
+
+    private static byte[] BitmapBytes(Bitmap bitmap)
+    {
+        var data = bitmap.LockBits(new Rectangle(Point.Empty, bitmap.Size), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            var bytes = new byte[Math.Abs(data.Stride) * data.Height];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+            return bytes;
+        }
+        finally { bitmap.UnlockBits(data); }
     }
 
     public static void RunUsage(string directory)
