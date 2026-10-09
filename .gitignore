@@ -1,0 +1,9 @@
+/.dotnet/
+/bin/
+/obj/
+/.vs/
+/artifacts/*
+!/artifacts/NetworkMonitor-Setup-*.exe
+*.user
+*.suo
+*.log

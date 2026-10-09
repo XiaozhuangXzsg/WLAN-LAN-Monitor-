@@ -1,202 +1,194 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
-using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
-using System.Runtime.InteropServices;
 
 namespace NetworkMonitor;
-
-internal static class Program
-{
-    [STAThread]
-    static void Main()
-    {
-        ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
-    }
-}
-
-internal sealed class MainForm : Form
-{
-    private readonly Dictionary<string, AdapterView> views = new();
-    private readonly TableLayoutPanel comparison = new() { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(6) };
-    private readonly TabControl ethernetTabs = new() { Dock = DockStyle.Fill };
-    private readonly TabControl wlanTabs = new() { Dock = DockStyle.Fill };
-    private readonly CheckBox floatingToggle = new() { Appearance = Appearance.Button, Text = "打开流量浮窗", AutoSize = true, Padding = new Padding(10, 5, 10, 5) };
-    private FloatingForm? floating;
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
-    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 32, TextAlign = ContentAlignment.MiddleLeft };
-    private readonly Dictionary<string, Capture> captures = new();
-    private readonly Dictionary<string, (long sent, long received)> previous = new();
-    private readonly ConcurrentDictionary<string, string> domains = new();
-    private Dictionary<FlowKey, int> owners = new();
-
-    public MainForm()
-    {
-        Text = "网络流量监控 · 以太网 / WLAN";
-        Width = 1500;
-        Height = 780;
-        MinimumSize = new Size(1050, 600);
-        comparison.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        comparison.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        comparison.Controls.Add(Section("以太网", ethernetTabs), 0, 0);
-        comparison.Controls.Add(Section("WLAN", wlanTabs), 1, 0);
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(8, 5, 0, 0) };
-        toolbar.Controls.Add(floatingToggle);
-        floatingToggle.CheckedChanged += (_, _) => ToggleFloating();
-        Controls.Add(comparison);
-        Controls.Add(toolbar);
-        Controls.Add(status);
-        status.Text = "正在发现网卡…";
-        Load += (_, _) => Start();
-        FormClosing += (_, _) => { timer.Stop(); floating?.Dispose(); foreach (var c in captures.Values) c.Dispose(); };
-        timer.Tick += (_, _) => RefreshData();
-    }
-
-    private static Control Section(string title, Control content)
-    {
-        var box = new GroupBox { Text = title, Dock = DockStyle.Fill, Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
-        box.Controls.Add(content);
-        return box;
-    }
-
-    private void ToggleFloating()
-    {
-        if (floatingToggle.Checked)
-        {
-            floating = new FloatingForm();
-            floating.FormClosed += (_, _) => { floating = null; floatingToggle.Checked = false; };
-            floatingToggle.Text = "关闭流量浮窗";
-            floating.Show(this);
-        }
-        else
-        {
-            floatingToggle.Text = "打开流量浮窗";
-            floating?.Close();
-        }
-    }
-
-    private void Start()
-    {
-        var adapters = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(n => n.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
-            .OrderBy(n => n.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? 0 : 1).ThenBy(n => n.Name).ToList();
-        foreach (var nic in adapters)
-        {
-            var label = nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? "以太网" : "WLAN";
-            var view = new AdapterView(nic, label);
-            views[nic.Id] = view;
-            (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? ethernetTabs : wlanTabs)
-                .TabPages.Add(new TabPage(nic.Name) { Controls = { view } });
-            try
-            {
-                var ip = nic.GetIPProperties().UnicastAddresses.FirstOrDefault(x => x.Address.AddressFamily == AddressFamily.InterNetwork)?.Address;
-                if (ip != null && nic.OperationalStatus == OperationalStatus.Up)
-                    captures[nic.Id] = new Capture(ip, domains);
-            }
-            catch (Exception ex) { view.Note = "抓包不可用：" + ex.Message; }
-        }
-        if (ethernetTabs.TabPages.Count == 0) ethernetTabs.TabPages.Add("未找到以太网网卡");
-        if (wlanTabs.TabPages.Count == 0) wlanTabs.TabPages.Add("未找到 WLAN 网卡");
-        if (adapters.Count == 0) status.Text = "未找到以太网或 WLAN 网卡。";
-        timer.Start();
-        RefreshData();
-    }
-
-    private void RefreshData()
-    {
-        try { owners = ConnectionOwners.Read(); }
-        catch (Exception ex) { status.Text = "无法读取进程连接：" + ex.Message; }
-        long ethernetUp = 0, ethernetDown = 0, wlanUp = 0, wlanDown = 0;
-        foreach (var (id, view) in views)
-        {
-            try
-            {
-                var stats = view.Nic.GetIPv4Statistics();
-                var now = (stats.BytesSent, stats.BytesReceived);
-                if (!previous.TryGetValue(id, out var prior)) prior = now;
-                previous[id] = now;
-                var up = Math.Max(0, now.BytesSent - prior.sent);
-                var down = Math.Max(0, now.BytesReceived - prior.received);
-                if (view.Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
-                { ethernetUp += up; ethernetDown += down; }
-                else { wlanUp += up; wlanDown += down; }
-                CaptureSnapshot snapshot = captures.TryGetValue(id, out var cap) ? cap.Drain(owners) : new();
-                view.UpdateView(up, down, snapshot, domains);
-            }
-            catch (Exception ex) { view.Note = "读取网卡失败：" + ex.Message; }
-        }
-        floating?.UpdateRates(ethernetUp, ethernetDown, wlanUp, wlanDown);
-        if (views.Count > 0) status.Text = "每秒更新 · 图表为网卡总流量；软件与域名统计为本机 IPv4 抓包流量 · HTTPS 只显示域名，不显示路径";
-    }
-}
 
 internal sealed class AdapterView : UserControl
 {
     public NetworkInterface Nic { get; }
-    private readonly Label title = new() { Dock = DockStyle.Top, Height = 60, Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold) };
-    private readonly Label note = new() { Dock = DockStyle.Top, Height = 42 };
-    private readonly Chart chart = new() { Dock = DockStyle.Top, Height = 175 };
-    private readonly ListView apps = MakeList("软件", "上传", "下载", "总计");
-    private readonly ListView hosts = MakeList("域名 / 远端 IP", "软件", "上传", "下载", "总计");
+    private readonly Label note = Theme.Label("", 8, Theme.Muted);
+    private readonly Label download = Theme.Label("0 B/s", 17, Theme.Blue, true);
+    private readonly Label upload = Theme.Label("0 B/s", 17, Theme.Teal, true);
+    private readonly Label total = Theme.Label("0 B", 17, bold: true);
+    private readonly Label today = Theme.Label("0 B", 17, bold: true);
+    private readonly Chart chart = new() { Dock = DockStyle.Top, Height = 142 };
+    private readonly ListView apps = MakeList("软件", "总流量");
+    private readonly ListView ips = MakeList("远端 IP", "总流量");
+    private readonly ImageList appIcons = new() { ImageSize = new Size(24, 24), ColorDepth = ColorDepth.Depth32Bit };
     private readonly Dictionary<string, Traffic> appTotals = new();
-    private readonly Dictionary<(string host, string app), Traffic> hostTotals = new();
+    private readonly Dictionary<string, Traffic> ipTotals = new();
+    private readonly Dictionary<string, string> appNames = new();
+    private readonly Dictionary<string, string?> appPaths = new();
+    private readonly Dictionary<string, string> appIconKeys = new();
+    private readonly Button adapterToggle = Theme.Button("…");
+    private readonly Panel quotaPanel = new() { Dock = DockStyle.Top, Height = 66, Visible = false, BackColor = Theme.Surface };
+    private readonly QuotaMeter quotaMeter = new() { Dock = DockStyle.Fill };
+    private readonly NumericUpDown quotaInput = new() { DecimalPlaces = 2, Increment = 5, Minimum = 0, Maximum = 100000, Width = 110, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Text };
+    private readonly Button quotaApply = Theme.Button("设置限额");
+    private bool adapterEnabled;
+    public event Action<AdapterView>? AdapterToggleRequested;
+    public event Action<long>? QuotaChanged;
+    public bool ToggleEnabled { set => adapterToggle.Enabled = value; }
+    public bool AdapterEnabled => adapterEnabled;
+    public void SetAdapterEnabled(bool enabled)
+    {
+        adapterEnabled = enabled;
+        adapterToggle.Text = enabled ? "禁用此网卡" : "启用此网卡";
+    }
     public string Note { set => note.Text = value; }
+    public long ChartPeak => chart.Peak;
+    public void SetChartScale(long maximum) { chart.SharedMaximum = maximum; chart.Invalidate(); }
 
     public AdapterView(NetworkInterface nic, string kind)
     {
         Nic = nic;
+        adapterEnabled = nic.OperationalStatus == OperationalStatus.Up;
         Dock = DockStyle.Fill;
-        title.Text = $"{kind} · {nic.Name}";
-        note.Text = "统计从软件启动时开始。软件和域名流量需要管理员权限及有效的 IPv4 地址。";
-        var lists = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-        lists.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        lists.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        lists.Controls.Add(Group("按软件统计", apps), 0, 0);
-        lists.Controls.Add(Group("按域名 / 远端 IP 统计", hosts), 0, 1);
+        BackColor = Theme.Surface; ForeColor = Theme.Text;
+        Font = new Font("Microsoft YaHei UI", 9);
+        note.Dock = DockStyle.Top; note.Height = 22;
+        note.Text = "域名来自 DNS；HTTPS 路径不可见。";
+        var metrics = new TableLayoutPanel { Dock = DockStyle.Top, Height = 104, ColumnCount = 2, RowCount = 4, BackColor = Theme.Surface };
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        for (int i = 0; i < 4; i++) metrics.RowStyles.Add(new RowStyle(SizeType.Percent, i % 2 == 0 ? 18 : 32));
+        metrics.Controls.Add(Theme.Label("↓ 下载速率", 9, Theme.Muted), 0, 0); metrics.Controls.Add(Theme.Label("↑ 上传速率", 9, Theme.Muted), 1, 0);
+        metrics.Controls.Add(download, 0, 1); metrics.Controls.Add(upload, 1, 1);
+        metrics.Controls.Add(Theme.Label("今日已用", 9, Theme.Muted), 0, 2); metrics.Controls.Add(Theme.Label("本月累计 · 上传 + 下载", 9, Theme.Muted), 1, 2);
+        metrics.Controls.Add(today, 0, 3); metrics.Controls.Add(total, 1, 3);
+        var lists = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 6, 0, 0), BackColor = Theme.Surface };
+        lists.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57)); lists.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
+        apps.SmallImageList = appIcons;
+        lists.Controls.Add(Group("软件流量 · 前三名", apps), 0, 0);
+        lists.Controls.Add(Group("IP 流量 · 前三名", ips), 1, 0);
+        adapterToggle.Click += (_, _) => AdapterToggleRequested?.Invoke(this);
+        quotaApply.Click += (_, _) => QuotaChanged?.Invoke((long)(quotaInput.Value * 1024m * 1024m * 1024m));
+        var adapterBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36, WrapContents = false, Padding = new Padding(0, 2, 0, 0), BackColor = Theme.Surface };
+        var adapterLabel = Theme.Label("网卡开关", 9, Theme.Muted); adapterLabel.Width = 85; adapterBar.Controls.Add(adapterLabel); adapterBar.Controls.Add(adapterToggle);
+        var quotaLayout = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, WrapContents = false, Padding = new Padding(0, 2, 0, 0), BackColor = Theme.Surface };
+        var quotaLabel = Theme.Label("月限额 (GiB)", 9, Theme.Muted); quotaLabel.Width = 95; quotaLayout.Controls.Add(quotaLabel); quotaLayout.Controls.Add(quotaInput); quotaLayout.Controls.Add(quotaApply);
+        quotaPanel.Controls.Add(quotaMeter); quotaPanel.Controls.Add(quotaLayout);
+        if (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet) quotaPanel.Visible = true;
         Controls.Add(lists);
         Controls.Add(chart);
         Controls.Add(note);
-        Controls.Add(title);
+        Controls.Add(quotaPanel);
+        Controls.Add(adapterBar);
+        Controls.Add(metrics);
     }
 
     private static Control Group(string name, Control child)
     {
-        var box = new GroupBox { Text = name, Dock = DockStyle.Fill, Padding = new Padding(8) };
-        box.Controls.Add(child);
+        var box = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 3), BackColor = Theme.Surface };
+        var heading = Theme.Label(name + "  ·  本次运行", 9, Theme.Muted); heading.Dock = DockStyle.Top; heading.Height = 26;
+        box.Controls.Add(child); box.Controls.Add(heading);
         return box;
     }
 
     private static ListView MakeList(params string[] columns)
     {
-        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true };
-        foreach (var name in columns) list.Columns.Add(name, name == columns[0] ? 185 : 92);
+        var list = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Text, OwnerDraw = true };
+        foreach (var name in columns) list.Columns.Add(name, name == columns[0] ? 150 : 64);
+        list.SizeChanged += (_, _) =>
+        {
+            if (list.Columns.Count == 0) return;
+            list.Columns[0].Width = Math.Max(80, list.ClientSize.Width - 88);
+            if (list.Columns.Count > 1) list.Columns[1].Width = 84;
+        };
+        list.DrawColumnHeader += (_, e) =>
+        {
+            using var brush = new SolidBrush(Theme.Border); e.Graphics.FillRectangle(brush, e.Bounds);
+            TextRenderer.DrawText(e.Graphics, e.Header?.Text, list.Font, e.Bounds, Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        };
+        list.DrawItem += (_, e) => { };
+        list.DrawSubItem += (_, e) =>
+        {
+            if (e.Item is null || e.SubItem is null) return;
+            var bg = e.Item.Selected ? Theme.Border : (e.ItemIndex % 2 == 0 ? Theme.Surface : Color.FromArgb(Math.Max(0, Theme.Surface.R - 5), Math.Max(0, Theme.Surface.G - 5), Math.Max(0, Theme.Surface.B - 5)));
+            using var brush = new SolidBrush(bg); e.Graphics.FillRectangle(brush, e.Bounds);
+            int left = e.Bounds.Left + 6;
+            if (e.ColumnIndex == 0 && list.SmallImageList is not null && e.Item.ImageIndex >= 0)
+            {
+                var image = list.SmallImageList.Images[e.Item.ImageIndex];
+                e.Graphics.DrawImage(image, left, e.Bounds.Top + (e.Bounds.Height - 20) / 2, 20, 20); left += 25;
+            }
+            var rect = Rectangle.FromLTRB(left, e.Bounds.Top, e.Bounds.Right - 4, e.Bounds.Bottom);
+            TextRenderer.DrawText(e.Graphics, e.SubItem.Text, list.Font, rect, Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | (e.ColumnIndex == 0 ? TextFormatFlags.Left : TextFormatFlags.Right));
+        };
         return list;
     }
 
-    public void UpdateView(long up, long down, CaptureSnapshot snap, ConcurrentDictionary<string, string> domains)
+    public void SetQuota(long bytes) => quotaInput.Value = Math.Min(quotaInput.Maximum, Math.Max(quotaInput.Minimum, (decimal)bytes / 1024m / 1024m / 1024m));
+    public void UpdateView(long up, long down, CaptureSnapshot snap, ConcurrentDictionary<string, string> domains, Usage usage, long ethernetMonthlyLimit, long ethernetMonth)
     {
-        title.Text = $"{(Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? "以太网" : "WLAN")} · {Nic.Name}    ↑ {Fmt.Rate(up)}    ↓ {Fmt.Rate(down)}";
+        download.Text = Fmt.Rate(down); upload.Text = Fmt.Rate(up);
+        UpdateUsage(usage, ethernetMonthlyLimit, ethernetMonth);
+        // Keep the state changed by our own operation; NetworkInterface instances are snapshots
+        // and may continue reporting the old status after Windows disables the adapter.
+        adapterToggle.Text = adapterEnabled ? "禁用此网卡" : "启用此网卡";
         chart.Add(up, down);
         foreach (var row in snap.Rows)
         {
-            var app = row.Pid == 0 ? "未归属进程" : ProcessName(row.Pid);
-            Add(appTotals, app, row.Upload, row.Download);
-            var host = domains.TryGetValue(row.RemoteIp, out var domain) ? domain : row.RemoteIp;
-            Add(hostTotals, (host, app), row.Upload, row.Download);
+            var (key, name, path) = AppIdentity(row.Pid);
+            appNames[key] = name;
+            if (!appPaths.ContainsKey(key)) appPaths[key] = path;
+            Add(appTotals, key, row.Upload, row.Download);
+            Add(ipTotals, row.RemoteIp, row.Upload, row.Download);
         }
-        Fill(apps, appTotals.OrderByDescending(x => x.Value.Total).Take(100)
-            .Select(x => new[] { x.Key, Fmt.Bytes(x.Value.Up), Fmt.Bytes(x.Value.Down), Fmt.Bytes(x.Value.Total) }));
-        Fill(hosts, hostTotals.OrderByDescending(x => x.Value.Total).Take(150)
-            .Select(x => new[] { x.Key.host, x.Key.app, Fmt.Bytes(x.Value.Up), Fmt.Bytes(x.Value.Down), Fmt.Bytes(x.Value.Total) }));
+        var topApps = appTotals.OrderByDescending(x => x.Value.Total).Take(3).ToList();
+        foreach (var x in topApps) EnsureAppIcon(x.Key);
+        FillApps(topApps);
+        Fill(ips, ipTotals.OrderByDescending(x => x.Value.Total).Take(3)
+            .Select(x => new[] { x.Key, Fmt.Bytes(x.Value.Total) }));
+    }
+    public void UpdateUsage(Usage usage, long ethernetMonthlyLimit, long ethernetMonth)
+    {
+        total.Text = Fmt.Bytes(usage.Total); today.Text = Fmt.Bytes(usage.Today);
+        quotaPanel.Visible = Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet;
+        if (Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
+            note.Text = ethernetMonthlyLimit <= 0 ? $"本月已用 {Fmt.Bytes(ethernetMonth)} · 未设置月限额" : $"本月已用 {Fmt.Bytes(ethernetMonth)} · 剩余 {Fmt.Bytes(Math.Max(0, ethernetMonthlyLimit - ethernetMonth))}";
+        quotaMeter.SetUsage(ethernetMonthlyLimit, ethernetMonth);
     }
 
-    private static string ProcessName(int pid)
+    private static (string key, string name, string? path) AppIdentity(int pid)
     {
-        try { using var p = Process.GetProcessById(pid); return $"{p.ProcessName} ({pid})"; }
-        catch { return $"已退出进程 ({pid})"; }
+        if (pid <= 0) return ("unassigned", "未归属进程", null);
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            string? path = null;
+            try { path = p.MainModule?.FileName; } catch { }
+            string name = path == null ? p.ProcessName : Path.GetFileNameWithoutExtension(path);
+            return (path?.ToLowerInvariant() ?? name.ToLowerInvariant(), name, path);
+        }
+        catch { return ($"exited-{pid}", $"已退出进程 ({pid})", null); }
+    }
+    private void EnsureAppIcon(string key)
+    {
+        if (appIconKeys.ContainsKey(key)) return;
+        string iconKey = "default";
+        if (appPaths.TryGetValue(key, out string? path) && path != null)
+        {
+            try
+            {
+                using var icon = System.Drawing.Icon.ExtractAssociatedIcon(path);
+                if (icon != null) { iconKey = key; appIcons.Images.Add(iconKey, icon.ToBitmap()); }
+            }
+            catch { }
+        }
+        if (appIcons.Images.Count == 0) appIcons.Images.Add("default", SystemIcons.Application.ToBitmap());
+        appIconKeys[key] = appIcons.Images.ContainsKey(iconKey) ? iconKey : "default";
+    }
+    private void FillApps(List<KeyValuePair<string, Traffic>> rows)
+    {
+        apps.BeginUpdate(); apps.Items.Clear();
+        foreach (var x in rows)
+        {
+            var item = new ListViewItem(appNames[x.Key], appIconKeys[x.Key]);
+            item.SubItems.Add(Fmt.Bytes(x.Value.Total));
+            apps.Items.Add(item);
+        }
+        apps.EndUpdate();
     }
     private static void Add<TKey>(Dictionary<TKey, Traffic> map, TKey key, long up, long down) where TKey : notnull
     {
@@ -207,41 +199,10 @@ internal sealed class AdapterView : UserControl
     {
         list.BeginUpdate();
         list.Items.Clear();
-        foreach (var row in rows) list.Items.Add(new ListViewItem(row));
-        list.EndUpdate();
-    }
-}
-
-internal sealed class Traffic { public long Up; public long Down; public long Total => Up + Down; }
-internal static class Fmt
-{
-    public static string Bytes(long n) => n < 1024 ? $"{n} B" : n < 1048576 ? $"{n / 1024d:F1} KB" : n < 1073741824 ? $"{n / 1048576d:F1} MB" : $"{n / 1073741824d:F2} GB";
-    public static string Rate(long n) => Bytes(n) + "/s";
-}
-
-internal sealed class Chart : Control
-{
-    private readonly Queue<(long up, long down)> points = new();
-    public Chart() { DoubleBuffered = true; BackColor = Color.FromArgb(22, 29, 42); ForeColor = Color.White; }
-    public void Add(long up, long down) { points.Enqueue((up, down)); while (points.Count > 120) points.Dequeue(); Invalidate(); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-        var data = points.ToArray();
-        using var grid = new Pen(Color.FromArgb(55, 65, 80));
-        for (var i = 1; i <= 4; i++) { var y = i * Height / 5f; g.DrawLine(grid, 0, y, Width, y); }
-        var max = Math.Max(1024, data.Select(p => Math.Max(p.up, p.down)).DefaultIfEmpty().Max());
-        Draw(data.Select(p => p.down).ToArray(), Color.DeepSkyBlue);
-        Draw(data.Select(p => p.up).ToArray(), Color.Orange);
-        using var font = new Font("Microsoft YaHei UI", 9);
-        g.DrawString($"↓ 下载  ↑ 上传     峰值 {Fmt.Rate(max)}     最近 120 秒", font, Brushes.White, 12, 8);
-        void Draw(long[] values, Color color)
+        foreach (var row in rows)
         {
-            if (values.Length < 2) return;
-            using var pen = new Pen(color, 2.5f);
-            var pts = values.Select((v, i) => new PointF(Width - (values.Length - 1 - i) * Math.Max(1, Width / 119f), Height - 15 - (Height - 42) * v / max)).ToArray();
-            g.DrawLines(pen, pts);
+            list.Items.Add(new ListViewItem(row));
         }
+        list.EndUpdate();
     }
 }

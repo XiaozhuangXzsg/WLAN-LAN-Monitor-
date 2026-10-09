@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using NetworkMonitor;
 
 internal static class Uninstall
 {
@@ -28,19 +29,26 @@ internal static class Uninstall
             if (MessageBox.Show("确定卸载网络流量监控？", Product, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             string copy = Path.Combine(Path.GetTempPath(), "NetworkMonitor-Uninstall-" + Guid.NewGuid().ToString("N") + ".exe");
             File.Copy(Application.ExecutablePath, copy);
-            Process.Start(new ProcessStartInfo(copy, "/run") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(copy, "/run") { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
             return;
         }
         try
         {
-            string expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "NetworkMonitor");
-            if (!Path.GetFullPath(target).Equals(Path.GetFullPath(expected), StringComparison.OrdinalIgnoreCase))
-                throw new Exception("安装路径与预期不一致，请手动检查后删除。");
+            target = Path.GetFullPath(target);
+            if (target.TrimEnd(Path.DirectorySeparatorChar).Equals(Path.GetPathRoot(target).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+                throw new Exception("安装记录指向磁盘根目录，无法卸载。");
+            StartupTaskService.SetEnabled(false, null);
             string start = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), Product + ".lnk");
             string desktop = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), Product + ".lnk");
             if (File.Exists(start)) File.Delete(start);
             if (File.Exists(desktop)) File.Delete(desktop);
-            if (Directory.Exists(target)) Directory.Delete(target, true);
+            // Custom install directories may also contain the user's unrelated files.
+            foreach (string file in new[] { "NetworkMonitor.exe", "NetworkMonitor.dll", "NetworkMonitor.deps.json", "NetworkMonitor.runtimeconfig.json", "network-monitor.png", "Uninstall.exe" })
+            {
+                string installed = Path.Combine(target, file);
+                if (File.Exists(installed)) File.Delete(installed);
+            }
+            if (Directory.Exists(target) && Directory.GetFileSystemEntries(target).Length == 0) Directory.Delete(target);
             Registry.CurrentUser.DeleteSubKey(RegistryKey, false);
             MessageBox.Show("卸载完成。", Product);
         }

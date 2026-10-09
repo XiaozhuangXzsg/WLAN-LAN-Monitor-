@@ -6,8 +6,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.4.8</Version>
+    <ApplicationIcon>assets\network-monitor.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="installer/**/*.cs" />
+    <Content Include="assets\network-monitor.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

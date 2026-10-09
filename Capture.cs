@@ -143,7 +143,7 @@ internal sealed class Capture : IDisposable
 
 internal static class ConnectionOwners
 {
-    private const int Tcp = 2, Udp = 1;
+    private const int Tcp = 5, Udp = 1; // TCP_TABLE_OWNER_PID_ALL / UDP_TABLE_OWNER_PID
     [DllImport("iphlpapi.dll", SetLastError = true)]
     private static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, int family, int tableClass, uint reserved);
     [DllImport("iphlpapi.dll", SetLastError = true)]
