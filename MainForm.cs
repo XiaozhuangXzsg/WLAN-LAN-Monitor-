@@ -11,10 +11,12 @@ internal static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Any(arg => arg.StartsWith("--verify-", StringComparison.Ordinal))) Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         ApplicationConfiguration.Initialize();
         if (args.Length == 2 && args[0] == "--verify-usage") { Verification.RunUsage(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-ui") { Verification.Run(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-shutdown") { Verification.RunShutdown(args[1]); return; }
+        if (args.Length == 2 && args[0] == "--verify-tray") { Verification.RunTray(args[1]); return; }
         if (args.Contains("--remove-startup"))
         {
             try { StartupManager.SetEnabled(false); }
@@ -46,6 +48,9 @@ internal sealed class MainForm : Form
     private readonly bool preview, startInTray, persistPreview;
     private FloatingForm? floating;
     private bool initializing = true, quitting, sessionEnding;
+    private bool trayTransition, hiddenInTray;
+    private Rectangle normalWindowBounds;
+    private FormWindowState visibleWindowState = FormWindowState.Normal;
     private int ticks;
     private long ethernetUp, ethernetDown, wlanUp, wlanDown, ethernetTotal, wlanTotal;
     private string? saveError;
@@ -62,6 +67,7 @@ internal sealed class MainForm : Form
         Font = new Font(Theme.FontFamily, 9);
         BackColor = Theme.Background; ForeColor = Theme.Text;
         ClientSize = new Size(1340, 850); MinimumSize = new Size(1120, 740);
+        normalWindowBounds = Bounds;
         StartPosition = FormStartPosition.CenterScreen;
 
         var layout = new TableLayoutPanel { Name = "DashboardLayout", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(22, 12, 22, 10), BackColor = Theme.Background };
@@ -129,7 +135,13 @@ internal sealed class MainForm : Form
         tray.Icon = Icon; tray.Text = "网络流量监控"; tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => RestoreFromTray();
         Theme.Changed += ApplyTheme;
-        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized && state.MinimizeToTray) HideToTray(); };
+        Resize += (_, _) =>
+        {
+            if (trayTransition) return;
+            RememberWindowPlacement();
+            if (WindowState == FormWindowState.Minimized && state.MinimizeToTray) HideToTray();
+        };
+        LocationChanged += (_, _) => RememberWindowPlacement();
         FormClosing += OnClosing;
         FormClosed += OnClosed;
         Load += (_, _) =>
@@ -141,6 +153,7 @@ internal sealed class MainForm : Form
         };
         Shown += (_, _) =>
         {
+            RememberWindowPlacement();
             if (startInTray) { BeginInvoke(new Action(HideToTray)); return; }
             if (preview) return;
             BeginInvoke(new Action(() =>
@@ -252,8 +265,55 @@ internal sealed class MainForm : Form
         state.FloatingX = floating.Left; state.FloatingY = floating.Top;
         state.FloatingWidth = floating.LogicalSize.Width; state.FloatingHeight = floating.LogicalSize.Height;
     }
-    internal void HideToTray() { SaveLatestUsage(); Hide(); ShowInTaskbar = false; floating?.EnsureTopMost(); }
-    internal void RestoreFromTray() { ShowInTaskbar = true; Show(); WindowState = FormWindowState.Normal; Activate(); }
+    private void RememberWindowPlacement()
+    {
+        if (trayTransition || hiddenInTray || !Visible || WindowState == FormWindowState.Minimized) return;
+        visibleWindowState = WindowState;
+        if (WindowState == FormWindowState.Normal && Width >= MinimumSize.Width && Height >= MinimumSize.Height)
+            normalWindowBounds = Bounds;
+    }
+    internal void HideToTray()
+    {
+        if (trayTransition || IsDisposed || quitting) return;
+        RememberWindowPlacement(); SaveLatestUsage();
+        trayTransition = true;
+        try
+        {
+            hiddenInTray = true;
+            // Hide already removes the taskbar button. Changing ShowInTaskbar here
+            // recreates a minimized HWND and can replace its normal size with 160x28.
+            Hide();
+        }
+        finally { trayTransition = false; }
+        floating?.EnsureTopMost();
+    }
+    internal void RestoreFromTray()
+    {
+        if (trayTransition || IsDisposed || quitting) return;
+        trayTransition = true;
+        try
+        {
+            bool restorePlacement = hiddenInTray || !Visible || WindowState == FormWindowState.Minimized;
+            hiddenInTray = false;
+            // A hidden HWND can still be iconic; WindowState assignments while hidden
+            // only update WinForms' cache. Show under the transition guard first so
+            // restoring the native window cannot recursively hide it again.
+            Show();
+            if (restorePlacement)
+            {
+                WindowState = FormWindowState.Normal;
+                var area = Screen.FromRectangle(normalWindowBounds).WorkingArea;
+                int width = Math.Max(MinimumSize.Width, Math.Min(normalWindowBounds.Width, area.Width));
+                int height = Math.Max(MinimumSize.Height, Math.Min(normalWindowBounds.Height, area.Height));
+                Bounds = new Rectangle(Math.Clamp(normalWindowBounds.X, area.Left, Math.Max(area.Left, area.Right - width)),
+                    Math.Clamp(normalWindowBounds.Y, area.Top, Math.Max(area.Top, area.Bottom - height)), width, height);
+                WindowState = visibleWindowState == FormWindowState.Maximized ? FormWindowState.Maximized : FormWindowState.Normal;
+            }
+            BringToFront(); Activate();
+        }
+        finally { trayTransition = false; }
+        RememberWindowPlacement();
+    }
     internal void ExitApplication() { quitting = true; Close(); }
     protected override void WndProc(ref Message m)
     {

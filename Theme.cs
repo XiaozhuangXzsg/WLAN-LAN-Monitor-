@@ -145,8 +145,11 @@ internal static class Theme
     public static RoundedButton Button(string text) => new(text);
     public static GraphicsPath RoundedPath(Rectangle bounds, int radius)
     {
-        int d = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
         var path = new GraphicsPath();
+        // Layout may temporarily collapse controls during minimize/restore or resize.
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        if (radius <= 0) { path.AddRectangle(bounds); path.CloseFigure(); return path; }
+        int d = (int)Math.Min((long)radius * 2, Math.Min(bounds.Width, bounds.Height));
         path.AddArc(bounds.Left, bounds.Top, d, d, 180, 90);
         path.AddArc(bounds.Right - d, bounds.Top, d, d, 270, 90);
         path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
@@ -262,7 +265,13 @@ internal sealed class RoundedCard : Panel
     {
         DoubleBuffered = true; BackColor = Color.Transparent; Padding = new Padding(14);
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
-        SizeChanged += (_, _) => { using var path = Theme.RoundedPath(new Rectangle(0, 0, Width, Height), 15); Region = new Region(path); };
+        SizeChanged += (_, _) =>
+        {
+            using var path = Theme.RoundedPath(ClientRectangle, 15);
+            var oldRegion = Region;
+            Region = new Region(path);
+            oldRegion?.Dispose();
+        };
     }
     protected override void OnPaintBackground(PaintEventArgs e)
     {

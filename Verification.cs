@@ -8,6 +8,7 @@ internal static class Verification
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     private static bool IsUncovered(Form window, Point point) => GetAncestor(WindowFromPoint(window.PointToScreen(point)), 2) == window.Handle;
     public static void Run(string directory)
     {
@@ -241,6 +242,92 @@ internal static class Verification
             return bytes;
         }
         finally { bitmap.UnlockBits(data); }
+    }
+
+    public static void RunTray(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        var results = new List<string>();
+        void Check(bool value, string name) { if (!value) throw new Exception(name); results.Add("PASS " + name); }
+        using var form = new MainForm(preview: true, statePath: Path.Combine(directory, "tray-fixture-state.json"), persistPreview: true);
+        var nic = NetworkInterface.GetAllNetworkInterfaces().First();
+        form.AddPreview(nic, false); form.AddPreview(nic, true);
+        form.Show(); form.SetFloating(true); Application.DoEvents();
+        var normalBounds = form.Bounds;
+        var trace = new List<string>();
+        try
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                SendMessage(form.Handle, 0x0112, new IntPtr(0xF020), IntPtr.Zero); // SC_MINIMIZE
+                Application.DoEvents();
+                trace.Add($"minimize {i}: visible={form.Visible}, state={form.WindowState}, bounds={form.Bounds}, restore={form.RestoreBounds}, handle={form.Handle}");
+                Check(!form.Visible && form.Floating is { Visible: true }, $"minimize cycle {i} hides only the dashboard");
+                form.RestoreFromTray(); Application.DoEvents();
+                trace.Add($"restore {i}: visible={form.Visible}, state={form.WindowState}, bounds={form.Bounds}, restore={form.RestoreBounds}, handle={form.Handle}");
+                Check(form.Visible && form.WindowState == FormWindowState.Normal && form.Bounds == normalBounds && form.ClientSize.Height > 500,
+                    $"minimize cycle {i} restores a complete dashboard at its original bounds");
+                form.Size = new Size(normalBounds.Width + 40, normalBounds.Height + 30); Application.DoEvents();
+                form.Bounds = normalBounds; Application.DoEvents();
+            }
+            for (int i = 0; i < 4; i++)
+            {
+                form.WindowState = FormWindowState.Maximized; Application.DoEvents();
+                var maximizedBounds = form.Bounds;
+                SendMessage(form.Handle, 0x0112, new IntPtr(0xF020), IntPtr.Zero);
+                Application.DoEvents();
+                form.RestoreFromTray(); Application.DoEvents();
+                Check(form.Visible && form.WindowState == FormWindowState.Maximized && form.Bounds == maximizedBounds,
+                    $"maximized minimize cycle {i} restores the maximized dashboard");
+                SendMessage(form.Handle, 0x0112, new IntPtr(0xF060), IntPtr.Zero); // SC_CLOSE
+                Application.DoEvents();
+                Check(!form.IsDisposed && !form.Visible && form.Floating is { Visible: true }, $"maximized close cycle {i} preserves monitoring and the floating window");
+                form.RestoreFromTray(); Application.DoEvents();
+                Check(form.Visible && form.WindowState == FormWindowState.Maximized, $"maximized close cycle {i} restores its previous state");
+                form.WindowState = FormWindowState.Normal; Application.DoEvents();
+                Check(form.Bounds == normalBounds, $"maximized cycle {i} retains the original normal bounds");
+            }
+            for (int i = 0; i < 4; i++)
+            {
+                SendMessage(form.Handle, 0x0112, new IntPtr(0xF060), IntPtr.Zero);
+                Application.DoEvents();
+                Check(!form.Visible && !form.IsDisposed, $"normal close cycle {i} hides to tray");
+                form.RestoreFromTray(); form.RestoreFromTray(); Application.DoEvents();
+                Check(form.Visible && form.WindowState == FormWindowState.Normal && form.Bounds == normalBounds,
+                    $"normal close cycle {i} tolerates repeated tray activation");
+            }
+            form.HideToTray();
+            Check(SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, 160, 39, 0x0016), "native collapsed-window fixture is applied");
+            Application.DoEvents();
+            form.RestoreFromTray(); Application.DoEvents();
+            Check(form.Visible && form.Bounds == normalBounds && form.ClientSize.Height > 500, "a corrupted native window size recovers to the last usable bounds");
+            form.Size = new Size(normalBounds.Width + 40, normalBounds.Height + 30); Application.DoEvents();
+            Check(form.ClientSize.Width > 1000 && form.ClientSize.Height > 500, "resizing after recovering the dashboard remains safe");
+            var resizedBounds = form.Bounds;
+            form.HideToTray(); form.RestoreFromTray(); Application.DoEvents();
+            Check(form.Bounds == resizedBounds, "tray activation keeps the user's resized dashboard bounds");
+            IEnumerable<Control> Descendants(Control root) => root.Controls.Cast<Control>().SelectMany(child => new[] { child }.Concat(Descendants(child)));
+            var minimizeToggle = Descendants(form).OfType<RoundedToggle>().Single(control => control.Text == "最小化到托盘");
+            minimizeToggle.Checked = false;
+            SendMessage(form.Handle, 0x0112, new IntPtr(0xF020), IntPtr.Zero); Application.DoEvents();
+            Check(form.Visible && form.WindowState == FormWindowState.Minimized, "disabling minimize-to-tray keeps normal taskbar minimization");
+            form.RestoreFromTray(); Application.DoEvents();
+            Check(form.Visible && form.WindowState == FormWindowState.Normal && form.Bounds == resizedBounds, "tray activation can also restore taskbar minimization");
+            using (var path = Theme.RoundedPath(Rectangle.Empty, 15)) Check(path.PointCount == 0, "zero-sized rounded path is empty during layout transitions");
+            using (var path = Theme.RoundedPath(new Rectangle(1, 1, -2, -2), 15)) Check(path.PointCount == 0, "negative inset rounded bounds do not call GDI arcs");
+            using (var card = new RoundedCard())
+            {
+                card.Size = Size.Empty;
+                card.Size = new Size(1, 1);
+                using var bitmap = new Bitmap(1, 1); card.DrawToBitmap(bitmap, new Rectangle(0, 0, 1, 1));
+                card.Size = new Size(100, 100);
+                Check(card.Region is { } region && region.IsVisible(50, 50), "collapsed card can expand and paint safely");
+            }
+            form.ExitApplication();
+            Check(form.IsDisposed && form.Floating == null, "tray exit still closes the dashboard and floating window");
+            File.WriteAllLines(Path.Combine(directory, "tray-verification.txt"), results);
+        }
+        finally { File.WriteAllLines(Path.Combine(directory, "tray-trace.txt"), trace); }
     }
 
     public static void RunUsage(string directory)
