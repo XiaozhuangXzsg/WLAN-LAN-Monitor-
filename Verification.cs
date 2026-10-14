@@ -9,6 +9,7 @@ internal static class Verification
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] private static extern int RegisterWindowMessage(string message);
     private static bool IsUncovered(Form window, Point point) => GetAncestor(WindowFromPoint(window.PointToScreen(point)), 2) == window.Handle;
     public static void Run(string directory)
     {
@@ -328,6 +329,74 @@ internal static class Verification
             File.WriteAllLines(Path.Combine(directory, "tray-verification.txt"), results);
         }
         finally { File.WriteAllLines(Path.Combine(directory, "tray-trace.txt"), trace); }
+    }
+
+    public static void RunDesktops(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        var results = new List<string>();
+        void Check(bool value, string name) { if (!value) throw new Exception(name); results.Add("PASS " + name); }
+        using var form = new MainForm(preview: true, statePath: Path.Combine(directory, "desktops-fixture-state.json"));
+        using var probe = new VirtualDesktopPin();
+        form.Show(); form.SetFloating(true); Application.DoEvents();
+        var window = form.Floating!;
+        void WaitPinned(FloatingForm target)
+        {
+            for (int i = 0; i < 50 && !target.IsOnAllDesktops; i++)
+            { Thread.Sleep(100); Application.DoEvents(); target.EnsureTopMost(); }
+            if (!target.IsOnAllDesktops) throw new Exception("Virtual desktop pin failed: " + target.DesktopPinError);
+        }
+        WaitPinned(window);
+        File.WriteAllText(Path.Combine(directory, "desktop-pin-status.txt"), $"OS={Environment.OSVersion.Version}; Pinned={window.IsOnAllDesktops}; Error={window.DesktopPinError}");
+        Check(window.IsOnAllDesktops && probe.IsWindowPinned(window.Handle), "Windows confirms the floating window is pinned to all virtual desktops");
+        Check(!probe.IsWindowPinned(form.Handle), "the main dashboard stays on its own desktop");
+        var manager = (IDesktopMembership)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("AA509086-5CA9-4C25-8F95-589D3C07B48A"), throwOnError: true)!)!;
+        try
+        {
+            System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(manager.GetWindowDesktopId(window.Handle, out var floatingDesktop));
+            File.AppendAllText(Path.Combine(directory, "desktop-pin-status.txt"), $"\nFloatingDesktop={floatingDesktop}");
+            Check(floatingDesktop == new Guid("C2DDEA68-66F2-4CF9-8264-1BFD00FBBBAC"), "desktop manager reports the all-desktops window identity");
+        }
+        finally { System.Runtime.InteropServices.Marshal.ReleaseComObject(manager); }
+        form.HideToTray(); Application.DoEvents();
+        Check(!form.Visible && window.Visible && probe.IsWindowPinned(window.Handle), "tray hiding preserves the independent pinned floating window");
+        foreach (var theme in Theme.Names)
+        {
+            form.SetTheme(theme); Application.DoEvents(); window.EnsureTopMost(); WaitPinned(window);
+            Check(probe.IsWindowPinned(window.Handle), "theme switch keeps the floating window on every desktop in " + theme);
+        }
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(Control).GetMethod("RecreateHandle", flags)!.Invoke(window, null);
+        Application.DoEvents(); window.EnsureTopMost(); WaitPinned(window);
+        Check(probe.IsWindowPinned(window.Handle), "a recreated floating HWND is pinned again");
+        SendMessage(window.Handle, RegisterWindowMessage("TaskbarCreated"), IntPtr.Zero, IntPtr.Zero);
+        window.EnsureTopMost(); WaitPinned(window);
+        Check(probe.IsWindowPinned(window.Handle), "Explorer restart notification reconnects the pinning service");
+        using (var owner = new VirtualDesktopPin())
+        using (var fixture = new Form { ShowInTaskbar = false, Text = "Desktop pin ownership fixture" })
+        {
+            fixture.Show(); Application.DoEvents();
+            Check(owner.EnsurePinned(fixture.Handle) && probe.IsWindowPinned(fixture.Handle), "an owned test window can be pinned independently");
+            owner.ReleaseWindow(fixture.Handle);
+            Check(!probe.IsWindowPinned(fixture.Handle), "releasing a pin removes only the owned window's setting");
+            fixture.Close();
+        }
+        Check(probe.IsWindowPinned(window.Handle) && !probe.IsWindowPinned(form.Handle), "cleaning a separate pin leaves the floating and dashboard settings unchanged");
+        form.SetFloating(false); Application.DoEvents();
+        Check(window.IsDisposed && form.Floating == null, "closing the floating window releases its desktop integration");
+        form.SetFloating(true); Application.DoEvents();
+        window = form.Floating!; WaitPinned(window);
+        Check(probe.IsWindowPinned(window.Handle) && !window.ShowInTaskbar && window.Owner == null, "reopening pins the independent floating window without a taskbar button");
+        form.Close();
+        File.WriteAllLines(Path.Combine(directory, "desktops-verification.txt"), results);
+    }
+
+    [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("A5CD92FF-29BE-454C-8D04-D82879FB3F1B"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDesktopMembership
+    {
+        [System.Runtime.InteropServices.PreserveSig] int IsWindowOnCurrentVirtualDesktop(IntPtr window, out int current);
+        [System.Runtime.InteropServices.PreserveSig] int GetWindowDesktopId(IntPtr window, out Guid desktop);
+        [System.Runtime.InteropServices.PreserveSig] int MoveWindowToDesktop(IntPtr window, ref Guid desktop);
     }
 
     public static void RunUsage(string directory)

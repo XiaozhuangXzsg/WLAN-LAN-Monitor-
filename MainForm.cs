@@ -17,6 +17,7 @@ internal static class Program
         if (args.Length == 2 && args[0] == "--verify-ui") { Verification.Run(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-shutdown") { Verification.RunShutdown(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-tray") { Verification.RunTray(args[1]); return; }
+        if (args.Length == 2 && args[0] == "--verify-desktops") { Verification.RunDesktops(args[1]); return; }
         if (args.Contains("--remove-startup"))
         {
             try { StartupManager.SetEnabled(false); }
@@ -430,7 +431,9 @@ internal sealed class MainForm : Form
         UpdateFloating();
         ticks++;
         if (periodChanged || ticks % 10 == 0) Save(periodChanged || ticks % 60 == 0);
-        status.Text = saveError ?? store.EthernetLogWarning ?? store.LogWarning ?? error ?? store.Warning ?? "● 每秒更新   ·   本地日志累计   ·   软件 / IP 排名仅统计本次 IPv4 捕获";
+        status.Text = saveError ?? store.EthernetLogWarning ?? store.LogWarning
+            ?? (floating?.DesktopPinError != null ? "浮窗暂时无法在所有虚拟桌面显示，正在重试。" : null)
+            ?? error ?? store.Warning ?? "● 每秒更新   ·   本地日志累计   ·   软件 / IP 排名仅统计本次 IPv4 捕获";
     }
     private async Task ToggleAdapterAsync(AdapterView view)
     {

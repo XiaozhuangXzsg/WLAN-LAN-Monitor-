@@ -7,16 +7,22 @@ internal sealed class FloatingForm : Form
 {
     private readonly RateComparison display = new() { Dock = DockStyle.Fill };
     private readonly System.Windows.Forms.Timer pin = new() { Interval = 1500 };
+    private readonly VirtualDesktopPin desktops = new();
+    private IntPtr desktopHandle;
+    private static readonly int TaskbarCreated = RegisterWindowMessage("TaskbarCreated");
     private Point dragOrigin, windowOrigin;
     private Size sizeOrigin;
     private bool dragging, resizing;
     public event Action? BoundsCommitted;
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int RegisterWindowMessage(string message);
+    internal bool IsOnAllDesktops => desktops.IsPinned;
+    internal string? DesktopPinError => desktops.Error;
     public FloatingForm()
     {
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "实时流量 · 始终置顶";
+        Text = "实时流量 · 所有桌面置顶";
         FormBorderStyle = FormBorderStyle.None;
         ClientSize = new Size(430, 338);
         MinimumSize = new Size(240, 144);
@@ -33,13 +39,31 @@ internal sealed class FloatingForm : Form
         AttachGestures(display);
         pin.Tick += (_, _) => EnsureTopMost();
         Shown += (_, _) => { EnsureTopMost(); pin.Start(); };
-        FormClosed += (_, _) => { pin.Stop(); pin.Dispose(); };
         ApplyTheme();
     }
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        desktopHandle = Handle;
         Theme.ApplyWindow(this, floating: true);
+        if (Visible) EnsureTopMost();
+    }
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        desktops.ReleaseWindow(desktopHandle);
+        desktops.ResetConnection();
+        desktopHandle = IntPtr.Zero;
+        base.OnHandleDestroyed(e);
+    }
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == TaskbarCreated && TaskbarCreated != 0) desktops.ResetConnection();
+        base.WndProc(ref m);
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { pin.Stop(); pin.Dispose(); desktops.Dispose(); }
+        base.Dispose(disposing);
     }
     private void ApplyRoundedShape()
     {
@@ -105,7 +129,11 @@ internal sealed class FloatingForm : Form
     }
     public void EnsureTopMost()
     {
-        if (IsHandleCreated && Visible) SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013);
+        if (IsHandleCreated && Visible)
+        {
+            SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013);
+            desktops.EnsurePinned(Handle);
+        }
     }
     public void ApplyTheme()
     {
