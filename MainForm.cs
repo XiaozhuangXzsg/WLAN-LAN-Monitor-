@@ -18,6 +18,7 @@ internal static class Program
         if (args.Length == 2 && args[0] == "--verify-shutdown") { Verification.RunShutdown(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-tray") { Verification.RunTray(args[1]); return; }
         if (args.Length == 2 && args[0] == "--verify-desktops") { Verification.RunDesktops(args[1]); return; }
+        if (args.Length == 2 && args[0] == "--verify-history") { HistoryVerification.Run(args[1]); return; }
         if (args.Contains("--remove-startup"))
         {
             try { StartupManager.SetEnabled(false); }
@@ -41,6 +42,14 @@ internal sealed class MainForm : Form
     private readonly RoundedToggle trayToggle = Theme.Toggle("最小化到托盘");
     private readonly RoundedToggle startupToggle = Theme.Toggle("跟随系统启动");
     private readonly RoundedButton optimizeButton = Theme.Button("一键优化网络");
+    private readonly RoundedToggle wlanToggle = Theme.Toggle("显示校园 WLAN");
+    private readonly NumericUpDown cycleDay = new() { Minimum = 1, Maximum = 31, Width = 52, BorderStyle = BorderStyle.None };
+    private readonly Label periodLabel = Theme.Label("", 9, Theme.Muted);
+    private readonly TableLayoutPanel networkColumns = new() { Name = "DashboardColumns", Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Background };
+    private Control? wlanSection;
+    private readonly DailyHistoryChart historyChart = new();
+    private readonly Label historySummary = Theme.Label("", 10);
+    private readonly Label historyNote = Theme.Label("", 9, Theme.Muted);
     private readonly Label status = Theme.Label("正在发现网卡…", 9, Theme.Muted);
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly NotifyIcon tray = new();
@@ -71,16 +80,17 @@ internal sealed class MainForm : Form
         normalWindowBounds = Bounds;
         StartPosition = FormStartPosition.CenterScreen;
 
-        var layout = new TableLayoutPanel { Name = "DashboardLayout", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(22, 12, 22, 10), BackColor = Theme.Background };
+        var layout = new TableLayoutPanel { Name = "DashboardLayout", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(22, 12, 22, 10), BackColor = Theme.Background };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         var header = new TableLayoutPanel { Name = "DashboardHeader", Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, BackColor = Theme.Background };
         header.RowStyles.Add(new RowStyle(SizeType.Percent, 62)); header.RowStyles.Add(new RowStyle(SizeType.Percent, 38));
         header.Controls.Add(Theme.Label("网络流量概览", 23, bold: true), 0, 0);
-        header.Controls.Add(Theme.Label("以太网 × WLAN   /   实时对比 · 每月 1 日清零", 10, Theme.Muted), 0, 1);
+        header.Controls.Add(Theme.Label("实时监控 · 每日记录 · 自定义月度统计", 10, Theme.Muted), 0, 1);
         layout.Controls.Add(header, 0, 0);
         var toolbar = new FlowLayoutPanel { Name = "DashboardToolbar", Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 5, 0, 0), BackColor = Theme.Background };
         trayToggle.Checked = state.MinimizeToTray;
@@ -118,12 +128,44 @@ internal sealed class MainForm : Form
         optimizeButton.Click += (_, _) => { _ = OptimizeNetworkAsync(); };
         toolbar.Controls.AddRange(new Control[] { floatingToggle, trayToggle, startupToggle, optimizeButton, github, themeButton, hide });
         layout.Controls.Add(toolbar, 0, 1);
-        var columns = new TableLayoutPanel { Name = "DashboardColumns", Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Theme.Background };
-        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        columns.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        columns.Controls.Add(Section("以太网", "ETHERNET", ethernetTabs, Theme.Blue), 0, 0);
-        columns.Controls.Add(Section("校园无线网络", "WLAN", wlanTabs, Theme.Teal), 1, 0);
-        layout.Controls.Add(columns, 0, 2); layout.Controls.Add(status, 0, 3);
+        networkColumns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); networkColumns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        networkColumns.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        networkColumns.Controls.Add(Section("以太网", "ETHERNET", ethernetTabs, Theme.Blue), 0, 0);
+        wlanSection = Section("校园无线网络", "WLAN", wlanTabs, Theme.Teal); networkColumns.Controls.Add(wlanSection, 1, 0);
+        var settings = new FlowLayoutPanel { Name = "DashboardSettings", Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 6, 0, 0), BackColor = Theme.Background };
+        var cycleCaption = Theme.Label("每月起算日", 9); cycleCaption.Size = new Size(94, 32); cycleCaption.Dock = DockStyle.None;
+        cycleDay.Value = state.CycleStartDay; cycleDay.Margin = new Padding(0, 8, 12, 0);
+        var applyCycle = Theme.Button("应用起算日"); applyCycle.Click += (_, _) => ApplyCycleDay((int)cycleDay.Value);
+        var clear = Theme.Button("本期已用清零");
+        clear.Click += (_, _) =>
+        {
+            if (MessageBox.Show(this, "清零以太网和 WLAN 的本期已用流量，并恢复本期剩余额度？\n\n每日历史记录仍保留，图表不会被删除。", "确认清零", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) ResetPeriodUsage();
+        };
+        wlanToggle.Checked = state.ShowWlan;
+        wlanToggle.CheckedChanged += (_, _) => { state.ShowWlan = wlanToggle.Checked; ApplyWlanVisibility(); Save(); };
+        periodLabel.Dock = DockStyle.None; periodLabel.Size = new Size(430, 32);
+        settings.Controls.AddRange(new Control[] { cycleCaption, cycleDay, applyCycle, clear, wlanToggle, periodLabel }); layout.Controls.Add(settings, 0, 2);
+        var pages = Theme.Tabs(); pages.Name = "DashboardPages"; pages.Font = new Font(Theme.FontFamily, 9);
+        var livePage = new TabPage("实时监控") { BackColor = Theme.Background }; livePage.Controls.Add(networkColumns);
+        var dailyPage = new TabPage("每日统计") { BackColor = Theme.Background };
+        var historyLayout = new TableLayoutPanel { Name = "HistoryLayout", Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(12), BackColor = Theme.Background };
+        historyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46)); historyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        historyLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); historyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        var historyToolbar = new FlowLayoutPanel { Name = "HistoryToolbar", Dock = DockStyle.Fill, BackColor = Theme.Background };
+        var seven = Theme.Toggle("近 7 日"); var thirty = Theme.Toggle("近 30 日"); var bars = Theme.Toggle("柱状图"); var lines = Theme.Toggle("折线图");
+        void SelectHistory(int days, bool asBars)
+        {
+            state.HistoryDays = days; state.HistoryBars = asBars;
+            seven.Checked = days == 7; thirty.Checked = days == 30; bars.Checked = asBars; lines.Checked = !asBars; UpdateHistory(); Save();
+        }
+        seven.Click += (_, _) => SelectHistory(7, state.HistoryBars); thirty.Click += (_, _) => SelectHistory(30, state.HistoryBars);
+        bars.Click += (_, _) => SelectHistory(state.HistoryDays, true); lines.Click += (_, _) => SelectHistory(state.HistoryDays, false);
+        seven.Checked = state.HistoryDays != 30; thirty.Checked = state.HistoryDays == 30; bars.Checked = state.HistoryBars; lines.Checked = !state.HistoryBars;
+        historyToolbar.Controls.AddRange(new Control[] { seven, thirty, bars, lines });
+        historyLayout.Controls.Add(historyToolbar, 0, 0); historyLayout.Controls.Add(historySummary, 0, 1);
+        historyLayout.Controls.Add(historyChart, 0, 2); historyLayout.Controls.Add(historyNote, 0, 3);
+        dailyPage.Controls.Add(historyLayout); pages.TabPages.Add(livePage); pages.TabPages.Add(dailyPage);
+        layout.Controls.Add(pages, 0, 3); layout.Controls.Add(status, 0, 4);
         Controls.Add(layout);
         floatingToggle.CheckedChanged += (_, _) => { if (!initializing) ToggleFloating(); };
         trayToggle.CheckedChanged += (_, _) => { state.MinimizeToTray = trayToggle.Checked; Save(); };
@@ -169,6 +211,7 @@ internal sealed class MainForm : Form
             }));
         };
         timer.Tick += (_, _) => RefreshData();
+        ApplyWlanVisibility(); UpdateHistory();
         ApplyTheme();
     }
 
@@ -182,10 +225,48 @@ internal sealed class MainForm : Form
         Theme.ApplyTree(this);
         Theme.ApplyWindow(this);
         floating?.ApplyTheme();
+        historyChart.Invalidate();
     }
     internal void SetTheme(string name)
     {
         Theme.Set(name); state.ThemeName = Theme.Current; Save();
+    }
+    internal void SetWlanVisible(bool visible) => wlanToggle.Checked = visible;
+    private void ApplyWlanVisibility()
+    {
+        if (wlanSection == null) return;
+        wlanSection.Visible = state.ShowWlan;
+        networkColumns.ColumnStyles[0].Width = state.ShowWlan ? 50 : 100;
+        networkColumns.ColumnStyles[1].Width = state.ShowWlan ? 50 : 0;
+        floating?.SetWlanVisible(state.ShowWlan); UpdateHistory();
+    }
+    internal void ApplyCycleDay(int day)
+    {
+        SaveLatestUsage(); state.CycleStartDay = Math.Clamp(day, 1, 31); cycleDay.Value = state.CycleStartDay;
+        state.RollOver(DateTime.Now); Save(writeLog: true); RefreshUsageDisplay();
+    }
+    internal void ResetPeriodUsage()
+    {
+        SaveLatestUsage(); state.ResetCurrent(DateTime.Now); Save(writeLog: true); RefreshUsageDisplay();
+    }
+    private void RefreshUsageDisplay()
+    {
+        foreach (var view in views.Values) view.UpdateUsage(state.GetUsage(view.Nic.Id), state.EthernetMonthlyLimitBytes, state.EthernetMonth);
+        ethernetTotal = state.EthernetMonth;
+        wlanTotal = state.Adapters.Where(pair => !state.EthernetAdapterIds.Contains(pair.Key)).Sum(pair => pair.Value.Month);
+        UpdateFloating(); UpdateHistory();
+    }
+    private void UpdateHistory()
+    {
+        var now = DateTime.Now; var period = BillingPeriod.For(now, state.CycleStartDay);
+        periodLabel.Text = $"本期 {period.Start:MM/dd} — {period.End.AddDays(-1):MM/dd} · 每月 {state.CycleStartDay} 日起";
+        var points = state.DailySeries(now, state.HistoryDays == 30 ? 30 : 7);
+        historyChart.Bars = state.HistoryBars; historyChart.ShowWlan = state.ShowWlan; historyChart.UpdatePoints(points);
+        historySummary.Text = $"近 {points.Count} 日 · 以太网 {Fmt.Bytes(points.Sum(point => point.Ethernet))}"
+            + (state.ShowWlan ? $"   /   WLAN {Fmt.Bytes(points.Sum(point => point.Wlan))}" : "");
+        bool legacy = state.Adapters.Values.Any(usage => usage.Legacy.Any(item => item.Upload + item.Download > 0));
+        historyNote.Text = legacy ? "按自然日汇总上传＋下载；旧版未分日用量保留在周期累计中，不虚构到某一天。悬停可查看明细。"
+            : "按自然日汇总上传＋下载，今天实时累计；清零仅影响本期已用量，不删除每日历史。悬停可查看明细。";
     }
 
     private static Control Section(string name, string code, Control child, Color accent)
@@ -235,6 +316,7 @@ internal sealed class MainForm : Form
         if (floatingToggle.Checked && floating == null)
         {
             floating = new FloatingForm();
+            floating.SetWlanVisible(state.ShowWlan);
             if (state.FloatingWidth.HasValue && state.FloatingHeight.HasValue)
                 floating.RestoreSize(new Size(state.FloatingWidth.Value, state.FloatingHeight.Value));
             var preferred = state.FloatingX.HasValue && state.FloatingY.HasValue ? new Point(state.FloatingX.Value, state.FloatingY.Value) : floating.Location;
@@ -429,9 +511,10 @@ internal sealed class MainForm : Form
         var scale = views.Values.Select(v => v.ChartPeak).DefaultIfEmpty(1024).Max();
         foreach (var view in views.Values) view.SetChartScale(scale);
         UpdateFloating();
+        UpdateHistory();
         ticks++;
         if (periodChanged || ticks % 10 == 0) Save(periodChanged || ticks % 60 == 0);
-        status.Text = saveError ?? store.EthernetLogWarning ?? store.LogWarning
+        status.Text = saveError ?? store.EthernetLogWarning ?? store.DailyHistoryWarning ?? store.LogWarning
             ?? (floating?.DesktopPinError != null ? "浮窗暂时无法在所有虚拟桌面显示，正在重试。" : null)
             ?? error ?? store.Warning ?? "● 每秒更新   ·   本地日志累计   ·   软件 / IP 排名仅统计本次 IPv4 捕获";
     }

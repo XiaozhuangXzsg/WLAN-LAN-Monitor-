@@ -54,7 +54,7 @@ internal sealed class AdapterView : UserControl
         for (int i = 0; i < 4; i++) metrics.RowStyles.Add(new RowStyle(SizeType.Percent, i % 2 == 0 ? 18 : 32));
         metrics.Controls.Add(Theme.Label("↓ 下载速率", 9, Theme.Muted), 0, 0); metrics.Controls.Add(Theme.Label("↑ 上传速率", 9, Theme.Muted), 1, 0);
         metrics.Controls.Add(download, 0, 1); metrics.Controls.Add(upload, 1, 1);
-        metrics.Controls.Add(Theme.Label("今日已用", 9, Theme.Muted), 0, 2); metrics.Controls.Add(Theme.Label("本月累计 · 上传 + 下载", 9, Theme.Muted), 1, 2);
+        metrics.Controls.Add(Theme.Label("今日已用", 9, Theme.Muted), 0, 2); metrics.Controls.Add(Theme.Label("本期累计 · 上传 + 下载", 9, Theme.Muted), 1, 2);
         metrics.Controls.Add(today, 0, 3); metrics.Controls.Add(total, 1, 3);
         var lists = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 6, 0, 0), BackColor = Theme.Surface };
         lists.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57)); lists.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
@@ -66,7 +66,7 @@ internal sealed class AdapterView : UserControl
         var adapterBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 36, WrapContents = false, Padding = new Padding(0, 2, 0, 0), BackColor = Theme.Surface };
         var adapterLabel = Theme.Label("网卡开关", 9, Theme.Muted); adapterLabel.Width = 85; adapterBar.Controls.Add(adapterLabel); adapterBar.Controls.Add(adapterToggle);
         var quotaLayout = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, WrapContents = false, Padding = new Padding(0, 2, 0, 0), BackColor = Theme.Surface };
-        var quotaLabel = Theme.Label("月限额 (GiB)", 9, Theme.Muted); quotaLabel.Width = 95; quotaLayout.Controls.Add(quotaLabel); quotaLayout.Controls.Add(quotaInput); quotaLayout.Controls.Add(quotaApply);
+        var quotaLabel = Theme.Label("周期限额 (GiB)", 9, Theme.Muted); quotaLabel.Width = 95; quotaLayout.Controls.Add(quotaLabel); quotaLayout.Controls.Add(quotaInput); quotaLayout.Controls.Add(quotaApply);
         quotaPanel.Controls.Add(quotaMeter); quotaPanel.Controls.Add(quotaLayout);
         if (nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet) quotaPanel.Visible = true;
         Controls.Add(lists);
@@ -146,7 +146,7 @@ internal sealed class AdapterView : UserControl
         total.Text = Fmt.Bytes(usage.Total); today.Text = Fmt.Bytes(usage.Today);
         quotaPanel.Visible = Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet;
         if (Nic.NetworkInterfaceType == NetworkInterfaceType.Ethernet)
-            note.Text = ethernetMonthlyLimit <= 0 ? $"本月已用 {Fmt.Bytes(ethernetMonth)} · 未设置月限额" : $"本月已用 {Fmt.Bytes(ethernetMonth)} · 剩余 {Fmt.Bytes(Math.Max(0, ethernetMonthlyLimit - ethernetMonth))}";
+            note.Text = ethernetMonthlyLimit <= 0 ? $"本期已用 {Fmt.Bytes(ethernetMonth)} · 未设置月限额" : $"本期已用 {Fmt.Bytes(ethernetMonth)} · 剩余 {Fmt.Bytes(Math.Max(0, ethernetMonthlyLimit - ethernetMonth))}";
         quotaMeter.SetUsage(ethernetMonthlyLimit, ethernetMonth);
     }
 

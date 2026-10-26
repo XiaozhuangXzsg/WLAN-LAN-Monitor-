@@ -51,7 +51,8 @@ internal static class Verification
         Check(form.BackColor == Theme.Background && form.Floating.BackColor == Theme.Background && form.Floating.Controls[0].BackColor == Theme.Background, "live theme switch updates both windows and floating background");
         IEnumerable<Control> Descendants(Control root) => root.Controls.Cast<Control>().SelectMany(x => new[] { x }.Concat(Descendants(x)));
         Check(Descendants(form).OfType<Label>().Where(x => x.Text == "↓ 下载速率").All(x => x.ForeColor == Theme.Muted), "live switch updates label color roles");
-        Check(Descendants(form).OfType<Label>().Where(x => x.Text == "本月累计 · 上传 + 下载").All(x => x.Font.FontFamily.Name == Theme.FontFamily), "live switch updates fonts without changing metric labels");
+        var periodLabels = Descendants(form).OfType<Label>().Where(x => x.Text == "本期累计 · 上传 + 下载").ToList();
+        Check(periodLabels.Count == 2 && periodLabels.All(x => x.Font.FontFamily.Name == Theme.FontFamily), "live switch updates fonts without changing period metric labels");
         using (var backdrop = new Form { FormBorderStyle = FormBorderStyle.None, ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Bounds = Screen.FromControl(form).WorkingArea, BackColor = Color.FromArgb(35, 63, 99) })
         {
             backdrop.Show(); form.BringToFront(); form.Activate(); form.Floating.EnsureTopMost();

@@ -141,10 +141,12 @@ internal sealed class FloatingForm : Form
         Theme.ApplyWindow(this, floating: true); Invalidate(true);
     }
     public void UpdateRates(long eu, long ed, long wu, long wd, long et, long wt, long limit, long monthUsed) => display.UpdateRates(eu, ed, wu, wd, et, wt, limit, monthUsed);
+    public void SetWlanVisible(bool visible) { display.ShowWlan = visible; display.Invalidate(); }
 }
 
 internal sealed class RateComparison : Control
 {
+    internal bool ShowWlan { get; set; } = true;
     internal enum LayoutDensity { Full, Compact, Minimal }
     internal LayoutDensity Density => GetDensity(ClientSize, DeviceDpi);
     private static LayoutDensity GetDensity(Size pixels, int dpi) => pixels.Width * 96d / dpi >= 360 && pixels.Height * 96d / dpi >= 300 ? LayoutDensity.Full
@@ -183,12 +185,13 @@ internal sealed class RateComparison : Control
         using var large = MakeFont(density == LayoutDensity.Full ? 22 : density == LayoutDensity.Compact ? 18 : 15, FontStyle.Bold);
         using var track = new SolidBrush(Theme.Border);
         using var surface = new SolidBrush(Theme.Surface);
-        var maximum = Math.Max(1024, Math.Max(ethernetUp + ethernetDown, wlanUp + wlanDown));
+        var maximum = Math.Max(1024, Math.Max(ethernetUp + ethernetDown, ShowWlan ? wlanUp + wlanDown : 0));
         int quotaHeight = density == LayoutDensity.Full ? 80 : density == LayoutDensity.Compact ? 34 : 0;
         int rowHeight = (height - 40 - (quotaHeight > 0 ? 20 + quotaHeight : 10)) / 2;
+        if (!ShowWlan) rowHeight = height - 20 - (quotaHeight > 0 ? 10 + quotaHeight : 0);
         DrawRow("以太网", ethernetUp, ethernetDown, ethernetTotal, Theme.Blue, 10);
-        DrawRow("WLAN", wlanUp, wlanDown, wlanTotal, Theme.Teal, 20 + rowHeight);
-        if (quotaHeight > 0) DrawEthernetQuota(30 + rowHeight * 2);
+        if (ShowWlan) DrawRow("WLAN", wlanUp, wlanDown, wlanTotal, Theme.Teal, 20 + rowHeight);
+        if (quotaHeight > 0) DrawEthernetQuota(ShowWlan ? 30 + rowHeight * 2 : 20 + rowHeight);
         using (var grip = new Pen(Theme.Muted, 1.4f * scale))
         {
             for (int i = 0; i < 3; i++) g.DrawLine(grip, Pixel(width - 20 + i * 4), Pixel(height - 8), Pixel(width - 8), Pixel(height - 20 + i * 4));
@@ -222,9 +225,10 @@ internal sealed class RateComparison : Control
             using var path = PixelPath(new Rectangle(10, y, width - 20, rowHeight), 12);
             g.FillPath(surface, path);
             DrawText(name, heading, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Minimal ? 1 : 4), 72, density == LayoutDensity.Minimal ? 22 : 24));
-            if (density != LayoutDensity.Minimal) DrawText("本月累计 " + Fmt.Bytes(total), normal, Theme.FloatingSecondaryText, new Rectangle(102, y + 4, width - 124, 24), right: true);
+            if (density != LayoutDensity.Minimal) DrawText("本期累计 " + Fmt.Bytes(total), normal, Theme.FloatingSecondaryText, new Rectangle(102, y + 4, width - 124, 24), right: true);
             int column = (width - 44) / 2;
             int speedY = y + (density == LayoutDensity.Full ? Math.Max(30, rowHeight / 2 - 10) : density == LayoutDensity.Compact ? 30 : 25);
+            if (!ShowWlan) speedY = y + Math.Max(30, rowHeight / 2 - 10);
             int speedHeight = density == LayoutDensity.Full ? 30 : density == LayoutDensity.Compact ? 26 : 22;
             DrawRate("↓", down, new Rectangle(22, speedY, column - 4, speedHeight));
             DrawRate("↑", up, new Rectangle(22 + column, speedY, column, speedHeight));
@@ -239,7 +243,7 @@ internal sealed class RateComparison : Control
         {
             using var path = PixelPath(new Rectangle(10, y, width - 20, quotaHeight), 12);
             g.FillPath(surface, path);
-            string text = ethernetLimit <= 0 ? $"以太网月额度未设置 · 已用 {Fmt.Bytes(ethernetMonth)}" : $"以太网剩余 {Fmt.Bytes(Math.Max(0, ethernetLimit - ethernetMonth))} / {Fmt.Bytes(ethernetLimit)}";
+            string text = ethernetLimit <= 0 ? $"以太网额度未设置 · 已用 {Fmt.Bytes(ethernetMonth)}" : $"以太网剩余 {Fmt.Bytes(Math.Max(0, ethernetLimit - ethernetMonth))} / {Fmt.Bytes(ethernetLimit)}";
             DrawText(text, normal, Theme.Text, new Rectangle(22, y + (density == LayoutDensity.Full ? 10 : 5), width - 44, 24));
             if (density != LayoutDensity.Full) return;
             int barWidth = width - 44;

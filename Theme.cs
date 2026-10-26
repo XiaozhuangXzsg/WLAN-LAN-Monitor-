@@ -85,7 +85,7 @@ internal static class Theme
     }
     public static void ApplyTree(Control root)
     {
-        if (root is Form || root.Name is "DashboardLayout" or "DashboardHeader" or "DashboardToolbar" or "DashboardColumns") { root.BackColor = Background; root.ForeColor = Text; }
+        if (root is Form || root.Name is "DashboardLayout" or "DashboardHeader" or "DashboardToolbar" or "DashboardColumns" or "DashboardSettings" or "HistoryLayout" or "HistoryToolbar") { root.BackColor = Background; root.ForeColor = Text; }
         else if (root is RoundedCard) root.BackColor = Color.Transparent;
         else if (root is RoundedButton or RoundedToggle) { root.BackColor = ControlBackground(root); root.ForeColor = Text; }
         else if (root is Label label && label.Tag is ColorRole role)
@@ -96,6 +96,8 @@ internal static class Theme
         else if (root is NumericUpDown) { root.BackColor = Surface; root.ForeColor = Text; }
         else if (root is TextBox) { root.BackColor = Surface; root.ForeColor = Text; }
         else if (root is RateComparison) { root.BackColor = Background; root.ForeColor = Text; }
+        else if (root is DailyHistoryChart) { root.BackColor = Surface; root.ForeColor = Text; }
+        else if (root is TabControl or TabPage) { root.BackColor = Background; root.ForeColor = Text; }
         else if (root is Panel or UserControl or QuotaMeter or Chart) { root.BackColor = Surface; root.ForeColor = Text; }
         if (root.Font.FontFamily.Name != FontFamily) root.Font = new Font(FontFamily, root.Font.Size, root.Font.Style);
         foreach (Control child in root.Controls) ApplyTree(child);
@@ -241,7 +243,7 @@ internal sealed class QuotaMeter : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        string line = limit <= 0 ? $"本月已用 {Fmt.Bytes(used)}   ·   尚未设置月额度" : $"剩余 {Fmt.Bytes(Math.Max(0, limit - used))} / {Fmt.Bytes(limit)}   ·   {Math.Max(0, 100 - Math.Min(100, used * 100d / limit)):F0}%";
+        string line = limit <= 0 ? $"本期已用 {Fmt.Bytes(used)}   ·   尚未设置周期额度" : $"剩余 {Fmt.Bytes(Math.Max(0, limit - used))} / {Fmt.Bytes(limit)}   ·   {Math.Max(0, 100 - Math.Min(100, used * 100d / limit)):F0}%";
         TextRenderer.DrawText(e.Graphics, line, Font, new Rectangle(4, 0, Width - 8, 23), Theme.Gold, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         int y = Math.Min(Height - 9, 27), width = Math.Max(1, Width - 12);
         using var path = Theme.RoundedPath(new Rectangle(4, y, width, 7), 3);

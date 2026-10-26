@@ -195,7 +195,7 @@ internal sealed class SetupForm : Form
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(Setup.RegistryKey))
             {
                 key.SetValue("DisplayName", Setup.Product);
-                key.SetValue("DisplayVersion", "1.4.12");
+                key.SetValue("DisplayVersion", "1.5.0");
                 key.SetValue("EstimatedSize", (int)Math.Min(int.MaxValue, (installedBytes + 1023) / 1024), RegistryValueKind.DWord);
                 key.SetValue("Publisher", "NetworkMonitor");
                 key.SetValue("InstallLocation", target);
